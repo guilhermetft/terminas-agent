@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 420" width="100%" height="100%">
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#05070D" />
+      <stop offset="50%" stop-color="#0B0F19" />
+      <stop offset="100%" stop-color="#030408" />
+    </linearGradient>
+
+    <!-- Center Radial Glow -->
+    <radialGradient id="center-glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#38BDF8" stop-opacity="0.16" />
+      <stop offset="40%" stop-color="#818CF8" stop-opacity="0.08" />
+      <stop offset="80%" stop-color="#0B0F19" stop-opacity="0" />
+    </radialGradient>
+
+    <!-- Title Gradient -->
+    <linearGradient id="title-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="50%" stop-color="#F1F5F9" />
+      <stop offset="100%" stop-color="#38BDF8" />
+    </linearGradient>
+
+    <!-- Glow Filter -->
+    <filter id="neon-glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="4" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+
+    <!-- Technical Grid Pattern -->
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1E293B" stroke-width="0.75" stroke-opacity="0.35" />
+    </pattern>
+  </defs>
+
+  <!-- Background Layer -->
+  <rect width="1200" height="420" fill="url(#bg)" />
+  <rect width="1200" height="420" fill="url(#grid)" />
+  <rect width="1200" height="420" fill="url(#center-glow)" />
+
+  <!-- Subtle Ambient Particle Lights -->
+  <circle cx="200" cy="100" r="1.5" fill="#38BDF8" opacity="0.4" />
+  <circle cx="260" cy="320" r="1.2" fill="#818CF8" opacity="0.3" />
+  <circle cx="980" cy="110" r="1.5" fill="#38BDF8" opacity="0.4" />
+  <circle cx="940" cy="310" r="1.2" fill="#818CF8" opacity="0.3" />
+
+  <!-- Centered Content Wrapper -->
+  <g id="centered-content">
+    <!-- Top System Badge -->
+    <g transform="translate(470, 75)">
+      <rect width="260" height="28" rx="4" fill="#0F172A" stroke="#38BDF8" stroke-width="1" stroke-opacity="0.5" />
+      <circle cx="16" cy="14" r="4" fill="#38BDF8" filter="url(#neon-glow)" />
+      <text x="32" y="18" fill="#38BDF8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11" font-weight="700" letter-spacing="2">ORQUESTRADOR MESTRE DE IA</text>
+    </g>
+
+    <!-- Main Title -->
+    <text x="600" y="170" text-anchor="middle" fill="url(#title-grad)" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="64" font-weight="900" letter-spacing="1">TERMINA'S AGENT</text>
+
+    <!-- Subtitle -->
+    <text x="600" y="215" text-anchor="middle" fill="#94A3B8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="19" font-weight="400" letter-spacing="0.3">
+      Condutor de Redes Multi-Agente <tspan fill="#38BDF8">•</tspan> Motor RAG Local <tspan fill="#38BDF8">•</tspan> Copiloto Pessoal
+    </text>
+
+    <!-- Horizontal Decorative Conduit -->
+    <g transform="translate(350, 245)">
+      <line x1="0" y1="0" x2="500" y2="0" stroke="#1E293B" stroke-width="1.5" />
+      <line x1="200" y1="0" x2="300" y2="0" stroke="#38BDF8" stroke-width="2" filter="url(#neon-glow)" />
+      <circle cx="250" cy="0" r="4" fill="#38BDF8" filter="url(#neon-glow)" />
+    </g>
+
+    <!-- Feature Badges -->
+    <g transform="translate(305, 275)">
+      <!-- Badge 1: DAG -->
+      <rect x="0" y="0" width="135" height="30" rx="4" fill="#0F172A" stroke="#334155" stroke-width="1" />
+      <text x="67" y="19" text-anchor="middle" fill="#CBD5E1" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="600">Planejamento DAG</text>
+
+      <!-- Badge 2: RAG -->
+      <rect x="147" y="0" width="140" height="30" rx="4" fill="#0F172A" stroke="#334155" stroke-width="1" />
+      <text x="217" y="19" text-anchor="middle" fill="#CBD5E1" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="600">RAG Vetorial Local</text>
+
+      <!-- Badge 3: HITL -->
+      <rect x="299" y="0" width="135" height="30" rx="4" fill="#0F172A" stroke="#334155" stroke-width="1" />
+      <text x="366" y="19" text-anchor="middle" fill="#CBD5E1" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="600">Guardrails HITL</text>
+
+      <!-- Badge 4: SO -->
+      <rect x="446" y="0" width="145" height="30" rx="4" fill="#0F172A" stroke="#334155" stroke-width="1" />
+      <text x="518" y="19" text-anchor="middle" fill="#CBD5E1" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="600">Windows 11 e Linux</text>
+    </g>
+
+    <!-- Terminal Command Prompt Box -->
+    <g transform="translate(360, 335)">
+      <rect width="480" height="32" rx="6" fill="#080C14" stroke="#1E293B" stroke-width="1" />
+      <circle cx="16" cy="16" r="3" fill="#38BDF8" opacity="0.8" />
+      <text x="30" y="20" fill="#64748B" font-family="'Cascadia Code', Consolas, 'Courier New', monospace" font-size="12">
+        terminas <tspan fill="#38BDF8">&gt;</tspan> orchestrate --swarm --rag-local --guardrails-active
+      </text>
+    </g>
+  </g>
+
+  <!-- Technical Corner Marks -->
+  <path d="M 30 50 L 30 30 L 50 30" fill="none" stroke="#38BDF8" stroke-width="1.5" stroke-opacity="0.5" />
+  <path d="M 1170 50 L 1170 30 L 1150 30" fill="none" stroke="#38BDF8" stroke-width="1.5" stroke-opacity="0.5" />
+  <path d="M 30 370 L 30 390 L 50 390" fill="none" stroke="#38BDF8" stroke-width="1.5" stroke-opacity="0.5" />
+  <path d="M 1170 370 L 1170 390 L 1150 390" fill="none" stroke="#38BDF8" stroke-width="1.5" stroke-opacity="0.5" />
+</svg>
