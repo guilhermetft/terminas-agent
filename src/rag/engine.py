@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import functools
 import logging
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -15,6 +17,17 @@ from src.subagents_bridge.schemas import RagChunk
 logger = logging.getLogger(__name__)
 
 EMBED_BATCH_SIZE = 32
+
+
+def _synchronized(method):  # noqa: ANN001, ANN202
+    """Serializa o acesso ao índice: a mesma conexão SQLite pode ser usada de várias threads."""
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
 
 
 class EmbedderMismatchError(RuntimeError):
@@ -63,6 +76,7 @@ class RAGEngine:
         min_score: float = 0.0,
     ) -> None:
         chunk_text("", chunk_size, overlap)  # valida parâmetros cedo
+        self._lock = threading.RLock()  # a conexão SQLite é usada de threads auxiliares
         self.store = VectorStore(db_path)
         self.embedder = embedder or default_embedder()
         self.chunk_size = chunk_size
@@ -97,6 +111,7 @@ class RAGEngine:
                 f"Índice criado com '{recorded}'; embedder atual: '{self.embedder.name}'."
             )
 
+    @_synchronized
     def index_file(self, path: str | Path, *, force: bool = False) -> IndexResult:
         """Indexa (ou reindexa, se mudou) um arquivo. Sem mudanças, pula sem recalcular."""
         self._check_recorded_embedder()
@@ -120,6 +135,7 @@ class RAGEngine:
         )
         return IndexResult(key, len(chunks), skipped=False)
 
+    @_synchronized
     def index_path(
         self, path: str | Path, *, recursive: bool = True, force: bool = False
     ) -> IndexReport:
@@ -133,16 +149,20 @@ class RAGEngine:
                 report.unsupported.append(file.as_posix())
         return report
 
+    @_synchronized
     def remove(self, path: str | Path) -> bool:
         return self.store.remove_document(Path(path).expanduser().resolve().as_posix())
 
+    @_synchronized
     def stats(self) -> dict[str, int]:
         return self.store.stats()
 
+    @_synchronized
     def documents(self) -> list[dict[str, str | int]]:
         return self.store.list_documents()
 
     # ----------------------------------------------------------------- busca
+    @_synchronized
     def query(
         self, question: str, *, top_k: int | None = None, min_score: float | None = None
     ) -> list[SearchHit]:
@@ -171,6 +191,7 @@ class RAGEngine:
         """Texto pronto para injetar em prompt, com citação `arquivo:linhas` por trecho."""
         return "\n\n".join(f"[{h.citation}] (score {h.score:.2f})\n{h.content}" for h in hits)
 
+    @_synchronized
     def close(self) -> None:
         self.store.close()
 

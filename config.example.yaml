@@ -22,3 +22,15 @@ limits:
 paths:
   data_dir: ~/.terminas
   log_file: ~/.terminas/logs/audit.jsonl
+
+# Servidores MCP (stdio) cujas ferramentas viram skills "mcp.<servidor>.<ferramenta>".
+# Requer: pip install -e ".[mcp]". Exemplo (ajuste ao servidor que voce usa):
+mcp_servers: []
+#  - name: google-workspace        # nome padrao esperado pela skill google-workspace
+#    command: <executavel-do-servidor>
+#    args: ["--flag"]
+#    timeout_seconds: 30
+
+skills:
+  vault_dir: null                  # pasta de um vault Markdown/Obsidian para a skill quick-notes
+  plugins_dir: src/skills/plugins  # skills extras (.py) descobertas na inicializacao
