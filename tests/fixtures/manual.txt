@@ -1,0 +1,7 @@
+Manual do Serviço Termina
+
+A porta padrão do serviço é 8080.
+
+O banco de dados SQLite é criado automaticamente na primeira execução.
+
+Os logs de auditoria são gravados em formato JSONL.

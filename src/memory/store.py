@@ -52,8 +52,13 @@ SCHEMA_VERSION = len(MIGRATIONS)
 class SQLiteStore:
     """Conexão SQLite local com criação automática do arquivo e migrações versionadas."""
 
-    def __init__(self, path: str | Path = DEFAULT_DB_PATH) -> None:
+    def __init__(
+        self,
+        path: str | Path = DEFAULT_DB_PATH,
+        migrations: tuple[str, ...] = MIGRATIONS,
+    ) -> None:
         self.path = Path(path)
+        self.migrations = migrations
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._conn: sqlite3.Connection | None = sqlite3.connect(self.path)
         self._conn.row_factory = sqlite3.Row
@@ -72,7 +77,7 @@ class SQLiteStore:
 
     def _migrate(self) -> None:
         current = self.schema_version
-        for version, script in enumerate(MIGRATIONS, start=1):
+        for version, script in enumerate(self.migrations, start=1):
             if version <= current:
                 continue
             with self.conn:  # commit/rollback por migração
