@@ -1,0 +1,24 @@
+# Termina's Agent - exemplo de configuracao.
+# Copie para config.yaml. Nunca versione chaves reais: use variaveis de ambiente.
+
+behavior:
+  tone: tecnico
+  verbosity: conciso
+  language: pt-BR
+  rules: []
+
+llm:
+  default_model: gemini/gemini-2.5-flash   # qualquer modelo suportado pelo LiteLLM
+  triage_model: gemini/gemini-2.5-flash    # modelo rapido/barato para triagem
+  api_keys:
+    anthropic: ${ANTHROPIC_API_KEY}
+    gemini: ${GEMINI_API_KEY}
+    openai: ${OPENAI_API_KEY}
+
+limits:
+  max_steps: 15
+  timeout_seconds: 120
+
+paths:
+  data_dir: ~/.terminas
+  log_file: ~/.terminas/logs/audit.jsonl

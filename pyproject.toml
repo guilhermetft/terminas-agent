@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "terminas-agent"
+version = "0.1.0"
+description = "O Agente Mestre para Copiloto Pessoal, Conhecimento Local (RAG) e Redes Multi-Agente."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "guilhermetft", email = "guiftf2007@gmail.com" }
+]
+dependencies = [
+    "pydantic>=2.6.0",
+    "rich>=13.7.0",
+    "pyyaml>=6.0.1",
+    "litellm>=1.35.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=5.0.0",
+]
+
+[project.scripts]
+terminas = "src.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+pythonpath = ["."]
