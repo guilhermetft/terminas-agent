@@ -87,7 +87,8 @@ class VectorStore:
     """Persiste documentos e chunks vetorizados; busca por força bruta (escala local)."""
 
     def __init__(self, path: str | Path = DEFAULT_RAG_DB_PATH) -> None:
-        self.db = SQLiteStore(path, MIGRATIONS)
+        # Acesso serializado pelo lock do RAGEngine; permite rodar em thread auxiliar.
+        self.db = SQLiteStore(path, MIGRATIONS, check_same_thread=False)
 
     # ------------------------------------------------------------------ meta
     def get_meta(self, key: str) -> str | None:

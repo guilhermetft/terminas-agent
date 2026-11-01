@@ -56,11 +56,15 @@ class SQLiteStore:
         self,
         path: str | Path = DEFAULT_DB_PATH,
         migrations: tuple[str, ...] = MIGRATIONS,
+        *,
+        check_same_thread: bool = True,
     ) -> None:
         self.path = Path(path)
         self.migrations = migrations
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn: sqlite3.Connection | None = sqlite3.connect(self.path)
+        self._conn: sqlite3.Connection | None = sqlite3.connect(
+            self.path, check_same_thread=check_same_thread
+        )
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._migrate()

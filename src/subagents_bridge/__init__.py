@@ -7,6 +7,7 @@ from src.subagents_bridge.registry import (
     SubagentRegistry,
     SubagentRegistryError,
 )
+from src.subagents_bridge.telemetry import AgentStats, SwarmTelemetry, run_tracked
 from src.subagents_bridge.schemas import (
     AgentResult,
     AgentTask,
@@ -22,6 +23,7 @@ from src.subagents_bridge.schemas import (
 
 __all__ = [
     "AgentNotFoundError",
+    "AgentStats",
     "AgentResult",
     "AgentTask",
     "AgentTaskResult",
@@ -32,8 +34,10 @@ __all__ = [
     "SubagentInfo",
     "SubagentRegistry",
     "SubagentRegistryError",
+    "SwarmTelemetry",
     "TaskConstraints",
     "TaskContext",
     "TaskStatus",
     "TokenUsage",
+    "run_tracked",
 ]
