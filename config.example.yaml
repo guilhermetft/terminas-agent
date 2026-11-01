@@ -7,8 +7,10 @@ behavior:
   language: pt-BR
   rules: []
 
+# Para usar um modelo de IA nao e preciso editar este arquivo: rode `terminas` e use /login
+# (a chave fica em ~/.terminas/.env). As chaves de llm.api_keys sao opcionais (automacao/CI).
 llm:
-  default_model: gemini/gemini-2.5-flash   # qualquer modelo suportado pelo LiteLLM
+  default_model: gemini/gemini-2.5-flash   # dica de modelo; /login e /model escolhem o ativo
   triage_model: gemini/gemini-2.5-flash    # modelo rapido/barato para triagem
   api_keys:
     anthropic: ${ANTHROPIC_API_KEY}
@@ -21,6 +23,7 @@ limits:
 
 paths:
   data_dir: .terminas
+  auth_dir: ~/.terminas            # credenciais do /login (a variavel TERMINAS_HOME tem prioridade)
   log_file: null                   # padrao: <data_dir>/logs/audit.jsonl
 
 # Servidores MCP (stdio) cujas ferramentas viram skills "mcp.<servidor>.<ferramenta>".

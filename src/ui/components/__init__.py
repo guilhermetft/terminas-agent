@@ -6,6 +6,7 @@ from src.ui.components.tables import (
     agents_table,
     behavior_table,
     memory_table,
+    providers_table,
     skills_table,
     telemetry_table,
 )
@@ -17,6 +18,7 @@ __all__ = [
     "help_panel",
     "hitl_box",
     "memory_table",
+    "providers_table",
     "render_dag",
     "skills_table",
     "telemetry_table",

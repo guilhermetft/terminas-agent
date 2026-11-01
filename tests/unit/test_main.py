@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from src.main import EXIT_ERROR, EXIT_INTERRUPTED, EXIT_PARTIAL, _make_console, build_parser, main
-from tests.helpers import FakeLLM, ScriptedReader, make_console, output, plan_json
+from tests.helpers import FakeLLM, ScriptedReader, make_auth, make_console, output, plan_json
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -45,7 +45,7 @@ def test_interactive_session_with_injected_reader(isolated_cwd):
 
 def test_audit_log_is_written_under_data_dir(isolated_cwd):
     reader = ScriptedReader('/skill doc-gen {"format": "md", "content": "x", "output": "a"}', "n", "/exit")
-    main([], reader=reader, console=make_console(), llm=FakeLLM())
+    main([], reader=reader, console=make_console(), llm=FakeLLM(), auth=make_auth(isolated_cwd))
     lines = (isolated_cwd / ".terminas" / "logs" / "audit.jsonl").read_text(encoding="utf-8").splitlines()
     assert any('"event": "evaluated"' in line and "doc_gen.generate" in line for line in lines)
     assert any('"event": "rejected"' in line for line in lines)
@@ -58,7 +58,8 @@ def test_custom_config_changes_data_dir_and_behavior(isolated_cwd):
     )
     console = make_console()
     reader = ScriptedReader("/behavior", "/exit")
-    assert main(["--config", "meu.yaml"], reader=reader, console=console, llm=FakeLLM()) == 0
+    auth = make_auth(isolated_cwd)
+    assert main(["--config", "meu.yaml"], reader=reader, console=console, llm=FakeLLM(), auth=auth) == 0
     assert (isolated_cwd / "dados" / "memory.sqlite").is_file() and "seco" in output(console)
 
 
@@ -70,15 +71,16 @@ def test_config_errors_return_exit_2(isolated_cwd, capsys):
     assert "terminas: Arquivo de configuração não encontrado" in err and "limits.max_steps" in err
 
 
-def test_run_subcommand_exit_codes():
+def test_run_subcommand_exit_codes(isolated_cwd):
+    auth = make_auth(isolated_cwd)
     console = make_console()
-    skipped = main(["run", "fazer", "algo"], console=console, llm=FakeLLM(plan_json(("t1", None))))
+    skipped = main(["run", "fazer", "algo"], console=console, llm=FakeLLM(plan_json(("t1", None))), auth=auth)
     assert skipped == EXIT_PARTIAL  # sem subagentes, o nó fica ignorado
     text = output(console)
     assert "Resultado" in text and "nenhum executor disponível para 'master'" in text
 
     console = make_console()
-    assert main(["run", "meta"], console=console, llm=FakeLLM(*["lixo"] * 3)) == EXIT_ERROR
+    assert main(["run", "meta"], console=console, llm=FakeLLM(*["lixo"] * 3), auth=auth) == EXIT_ERROR
     assert "Não consegui montar um plano válido" in output(console)
 
 
@@ -111,3 +113,23 @@ def test_console_never_fails_on_legacy_encodings(monkeypatch):
     monkeypatch.setattr(sys, "stderr", object())  # sem reconfigure: ignorado
     _make_console()
     assert Stream.reconfigured == {"errors": "replace"}
+
+
+def test_run_subcommand_without_login_exits_with_a_clear_message(isolated_cwd):
+    console = make_console()
+    llm = FakeLLM()
+    code = main(["run", "fazer", "algo"], console=console, llm=llm, auth=make_auth(isolated_cwd, logged_in=False))
+    assert code == EXIT_ERROR and llm.calls == []  # nem tentou planejar
+    text = " ".join(output(console).split())
+    assert "Nenhum provedor de IA conectado" in text and "/login" in text and "ANTHROPIC_API_KEY" in text
+
+
+def test_interactive_session_without_login_is_blocked_but_help_works(isolated_cwd):
+    console = make_console()
+    reader = ScriptedReader("quero um relatorio", "/run algo", "/help", "/exit")
+    llm = FakeLLM()
+    code = main([], reader=reader, console=console, llm=llm, auth=make_auth(isolated_cwd, logged_in=False))
+    text = " ".join(output(console).split())
+    assert code == 0 and llm.calls == []
+    assert text.count("O agente está bloqueado") == 2 and "Comandos" in text
+    assert "Nenhum provedor de IA conectado. Use /login" in text  # aviso de boas-vindas

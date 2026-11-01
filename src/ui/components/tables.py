@@ -8,6 +8,7 @@ from typing import Any
 from rich.table import Table
 from rich.text import Text
 
+from src.auth import ProviderStatus
 from src.memory.config import BehaviorConfig
 from src.skills.base import SkillSpec
 from src.subagents_bridge.schemas import SubagentInfo
@@ -88,4 +89,22 @@ def behavior_table(behavior: BehaviorConfig) -> Table:
             table.add_row(f"regra {number}", Text(rule))
     else:
         table.add_row("regras", Text("nenhuma", style=theme.DIM))
+    return table
+
+
+def providers_table(statuses: Sequence[ProviderStatus], numbered: bool = False) -> Table:
+    """Provedores de IA: estado do login, chave mascarada e modelo."""
+    columns = (["#"] if numbered else []) + ["Provedor", "Estado", "Chave", "Modelo"]
+    table = _table("Provedores de IA", *columns)
+    origins = {"store": "/login", "env": "variável de ambiente"}
+    for number, status in enumerate(statuses, start=1):
+        if status.active:
+            state = Text("ativo", style=theme.SUCCESS)
+        elif status.logged_in:
+            state = Text("conectado", style=theme.PRIMARY)
+        else:
+            state = Text("desconectado", style=theme.DIM)
+        key = f"{status.masked_key} ({origins.get(status.source or '', '?')})" if status.logged_in else "—"
+        row = [str(number)] if numbered else []
+        table.add_row(*row, Text(status.spec.label), state, Text(key), Text(status.model or "—"))
     return table

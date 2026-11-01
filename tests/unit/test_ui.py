@@ -324,3 +324,114 @@ async def test_plain_reader_strips_the_bom_powershell_adds_to_piped_input(monkey
     middle = "/texto " + "\ufeff" + " no meio"
     monkeypatch.setattr(builtins, "input", lambda prompt: middle)
     assert await PlainReader().read_line("> ") == middle  # so remove o prefixo
+
+
+
+# ======================================================== segredos no leitor (issue #20)
+class _FakeTty:
+    def __init__(self, tty):
+        self._tty = tty
+
+    def isatty(self):
+        return self._tty
+
+
+async def test_plain_reader_secret_uses_getpass_in_a_terminal_and_strips_the_bom(monkeypatch):
+    import getpass
+
+    monkeypatch.setattr("sys.stdin", _FakeTty(True))
+    monkeypatch.setattr(getpass, "getpass", lambda prompt: "\ufeff" + "chave-secreta")
+    assert await PlainReader().read_secret("Chave: ") == "chave-secreta"
+
+    def eof(prompt):
+        raise EOFError
+
+    monkeypatch.setattr(getpass, "getpass", eof)
+    assert await PlainReader().read_secret("Chave: ") is None
+
+
+async def test_plain_reader_secret_reads_redirected_input_without_getpass(monkeypatch):
+    import getpass
+
+    monkeypatch.setattr("sys.stdin", _FakeTty(False))
+    monkeypatch.setattr(getpass, "getpass", lambda prompt: pytest.fail("getpass trava com entrada redirecionada"))
+    monkeypatch.setattr(builtins, "input", lambda prompt: "\u00ef\u00bb\u00bf" + "chave-do-pipe")
+    assert await PlainReader().read_secret("Chave: ") == "chave-do-pipe"
+
+
+async def test_prompt_toolkit_secret_prompt_is_hidden_and_never_saved_in_history(tmp_path):
+    from prompt_toolkit.input import create_pipe_input
+
+    history = tmp_path / "history"
+    with create_pipe_input() as pipe:
+        reader = reader_with_pipe(pipe, history_file=history)
+        assert reader._secret.is_password and not reader._session.is_password  # sem eco só no campo de segredo
+        pipe.send_text("meu-segredo-super-secreto\r")
+        assert await reader.read_secret("Chave: ") == "meu-segredo-super-secreto"
+        pipe.send_text("/help\r")
+        await reader.read_line("> ")
+        pipe.send_text("\x04")  # Ctrl+D no campo de segredo
+        assert await reader.read_secret("Chave: ") is None
+    saved = history.read_text(encoding="utf-8")
+    assert "/help" in saved and "meu-segredo" not in saved
+
+
+async def test_a_key_typed_at_the_normal_prompt_is_not_saved_in_history(tmp_path):
+    from prompt_toolkit.input import create_pipe_input
+
+    key = "sk-ant-api03-" + "Z" * 40
+    history = tmp_path / "history"
+    with create_pipe_input() as pipe:
+        reader = reader_with_pipe(pipe, history_file=history)
+        pipe.send_text(f"{key}\r")
+        assert await reader.read_line("> ") == key  # o app é quem recusa a linha; o histórico não guarda
+        pipe.send_text(f"use esta chave {key} por favor\r")
+        await reader.read_line("> ")
+        pipe.send_text("/status\r")
+        await reader.read_line("> ")
+    saved = history.read_text(encoding="utf-8")
+    assert "/status" in saved and key not in saved and "Z" * 20 not in saved
+
+
+async def test_in_memory_history_also_filters_secrets():
+    from prompt_toolkit.input import create_pipe_input
+
+    with create_pipe_input() as pipe:
+        reader = reader_with_pipe(pipe)
+        pipe.send_text("AIza" + "Q" * 35 + "\r")
+        await reader.read_line("> ")
+        pipe.send_text("/help\r")
+        await reader.read_line("> ")
+        stored = list(reader._session.history.get_strings())
+    assert stored == ["/help"]
+
+
+async def test_custom_history_filter_is_respected(tmp_path):
+    from prompt_toolkit.input import create_pipe_input
+    from prompt_toolkit.output import DummyOutput
+
+    with create_pipe_input() as pipe:
+        reader = PromptToolkitReader(
+            lambda text: [], tmp_path / "h", history_filter=lambda line: not line.startswith("x"),
+            input=pipe, output=DummyOutput(),
+        )  # fmt: skip
+        for line in ("xsecreto", "ok"):
+            pipe.send_text(line + "\r")
+            await reader.read_line("> ")
+    assert "ok" in (tmp_path / "h").read_text(encoding="utf-8") and "xsecreto" not in (tmp_path / "h").read_text(encoding="utf-8")
+
+
+def test_providers_table_and_header_model(tmp_path):
+    from src.auth import AuthManager
+
+    key = "sk-ant-api03-" + "A" * 30
+    manager = AuthManager(tmp_path, environ={"ANTHROPIC_API_KEY": key})
+    plain = render(components.providers_table(manager.status()))
+    assert "Provedores de IA" in plain and "Claude (Anthropic)" in plain and "ativo" in plain
+    assert "desconectado" in plain and "sk-a…AAAA (variável de ambiente)" in plain and key not in plain
+    numbered = render(components.providers_table(manager.status(), numbered=True))
+    assert " 1 " in numbered and " 3 " in numbered
+    header = render(components.header("0.1.0", session=None, busy=False, workers=0, tokens=0, auto_remaining=0,
+                                      model="anthropic/claude-sonnet-5-5"))  # fmt: skip
+    assert "Model: anthropic/claude-sonnet-5-5" in header
+    assert "Model: sem login" in render(components.header("0.1.0", session=None, busy=False, workers=0, tokens=0, auto_remaining=0))

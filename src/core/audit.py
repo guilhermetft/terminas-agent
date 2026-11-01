@@ -10,6 +10,8 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from src.utils.secrets import redact
+
 
 class JsonlAuditLog:
     def __init__(self, path: str | Path) -> None:
@@ -17,7 +19,7 @@ class JsonlAuditLog:
         self._lock = threading.Lock()
 
     def __call__(self, event: dict[str, Any]) -> None:
-        line = json.dumps(event, ensure_ascii=False, default=str)
+        line = redact(json.dumps(event, ensure_ascii=False, default=str))  # nunca grava chaves
         with self._lock:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             with self.path.open("a", encoding="utf-8") as handle:

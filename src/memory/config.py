@@ -58,6 +58,7 @@ class LimitsConfig(_Section):
 
 class PathsConfig(_Section):
     data_dir: str = ".terminas"
+    auth_dir: str = "~/.terminas"  # credenciais (/login): do usuário, valem em qualquer pasta
     log_file: str | None = None  # padrão: <data_dir>/logs/audit.jsonl
 
 
@@ -77,6 +78,11 @@ class AppConfig(_Section):
     @property
     def data_dir(self) -> Path:
         return Path(self.paths.data_dir).expanduser()
+
+    @property
+    def auth_dir(self) -> Path:
+        """Pasta das credenciais. A variável TERMINAS_HOME, se existir, tem prioridade."""
+        return Path(os.environ.get("TERMINAS_HOME") or self.paths.auth_dir).expanduser()
 
     @property
     def memory_db(self) -> Path:
