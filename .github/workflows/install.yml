@@ -122,6 +122,8 @@ jobs:
           & ${{ matrix.shell }} -NoProfile -ExecutionPolicy Bypass -File install.ps1
           if ($LASTEXITCODE -ne 1) { throw "esperava exit 1 ao rodar o arquivo" }
           Remove-Item Env:\TERMINAS_EXTRAS
+          # o wrapper do Actions usa o ultimo $LASTEXITCODE como codigo do passo; o 1 acima era esperado
+          $global:LASTEXITCODE = 0
       - name: Desinstalar
         run: |
           $env:TERMINAS_UNINSTALL = '1'
