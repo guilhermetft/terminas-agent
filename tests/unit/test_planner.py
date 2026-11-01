@@ -176,3 +176,9 @@ async def test_litellm_client_handles_empty_content(monkeypatch):
 
 def test_default_llm_is_litellm_client():
     assert callable(PlannerEngine().llm)
+
+
+async def test_prompt_tells_llm_when_no_agents_exist():
+    llm = FakeLLM(plan_json(n("t1")))
+    await PlannerEngine(llm).create_dag("meta", agents=[])
+    assert "Não há agentes disponíveis" in llm.calls[0][0]["content"]

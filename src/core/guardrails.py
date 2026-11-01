@@ -12,6 +12,7 @@ Princípios:
 from __future__ import annotations
 
 import re
+import time
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
@@ -324,6 +325,7 @@ Executor = Callable[[ActionRequest], Awaitable[Any]]
 AuditSink = Callable[[dict[str, Any]], None]
 
 MAX_MODIFICATIONS = 3
+DEFAULT_AUTO_TTL = 1800.0  # 30 min
 
 
 @dataclass
@@ -342,12 +344,46 @@ class GuardrailEngine:
         approval_threshold: RiskLevel = RiskLevel.MEDIUM,
         tool_risks: Mapping[str, RiskLevel] | None = None,
         audit: AuditSink | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.approval_threshold = approval_threshold
         self.tool_risks = {**DEFAULT_TOOL_RISKS, **(tool_risks or {})}
         self._audit = audit
+        self._clock = clock
+        self._auto_until: float | None = None
         self._decisions: dict[str, GuardrailDecision] = {}
         self._session_allowed: set[str] = set()
+
+    # --------------------------------------------------------------- modo automático
+    def enable_auto(self, ttl_seconds: float = DEFAULT_AUTO_TTL) -> None:
+        """Modo automático temporário: dispensa aprovação para risco Médio.
+
+        Risco Crítico NUNCA é dispensado e o modo expira sozinho após `ttl_seconds`."""
+        if ttl_seconds <= 0:
+            raise ValueError("ttl_seconds deve ser > 0.")
+        self._auto_until = self._clock() + ttl_seconds
+        self._emit_event("auto_mode_on", ttl_seconds=ttl_seconds)
+
+    def disable_auto(self) -> None:
+        was_active = self.auto_active
+        self._auto_until = None
+        if was_active:
+            self._emit_event("auto_mode_off")
+
+    @property
+    def auto_remaining(self) -> float:
+        """Segundos restantes do modo automático (0 se desligado ou expirado)."""
+        if self._auto_until is None:
+            return 0.0
+        return max(0.0, self._auto_until - self._clock())
+
+    @property
+    def auto_active(self) -> bool:
+        return self.auto_remaining > 0
+
+    @property
+    def effective_threshold(self) -> RiskLevel:
+        return RiskLevel.CRITICAL if self.auto_active else self.approval_threshold
 
     # ------------------------------------------------------------- classificação
     def classify(self, request: ActionRequest) -> Classification:
@@ -387,8 +423,9 @@ class GuardrailEngine:
             state=ApprovalState.AWAITING_APPROVAL,
             reasons=classification.reasons,
         )
-        if classification.risk < self.approval_threshold:
-            decision.state, decision.resolution = ApprovalState.APPROVED, "auto"
+        if classification.risk < self.effective_threshold:
+            decision.state = ApprovalState.APPROVED
+            decision.resolution = "auto" if classification.risk < self.approval_threshold else "auto-mode"
         elif self._signature(request, classification.risk) in self._session_allowed:
             decision.state, decision.resolution = ApprovalState.APPROVED, "session"
         self._decisions[decision.id] = decision
@@ -484,3 +521,7 @@ class GuardrailEngine:
     def _emit(self, event: str, decision: GuardrailDecision) -> None:
         if self._audit is not None:
             self._audit({"event": event, **decision.to_dict()})
+
+    def _emit_event(self, event: str, **fields: Any) -> None:
+        if self._audit is not None:
+            self._audit({"event": event, "created_at": datetime.now(UTC).isoformat(), **fields})

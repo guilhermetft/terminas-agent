@@ -1,6 +1,8 @@
 """Termina Core Engine - Planning, Dispatching, and Guardrails."""
 
+from src.core.audit import JsonlAuditLog
 from src.core.dag import CycleError, TaskDAG, TaskNode, find_cycle, run_dag
+from src.core.engine import MasterEngine, NodeOutcome, NodeState, RunEvent, RunReport
 from src.core.guardrails import (
     ActionRequest,
     Approval,
@@ -18,6 +20,12 @@ from src.core.guardrails import (
 from src.core.planner import Planner, PlannerEngine, PlanningError, litellm_client
 
 __all__ = [
+    "RunReport",
+    "RunEvent",
+    "NodeState",
+    "NodeOutcome",
+    "MasterEngine",
+    "JsonlAuditLog",
     "ActionRequest",
     "Approval",
     "ApprovalScope",

@@ -33,10 +33,12 @@ def test_version():
     assert src.__version__ == "0.1.0"
 
 
-def test_main_entrypoint_returns_zero():
+def test_main_entrypoint_returns_zero(tmp_path, monkeypatch):
     from src.main import main
+    from tests.helpers import ScriptedReader, make_console
 
-    assert main([]) == 0
+    monkeypatch.chdir(tmp_path)  # os dados (.terminas) ficam no diretório temporário
+    assert main([], reader=ScriptedReader("/exit"), console=make_console()) == 0
 
 
 def test_main_version_flag(capsys):

@@ -20,8 +20,8 @@ limits:
   timeout_seconds: 120
 
 paths:
-  data_dir: ~/.terminas
-  log_file: ~/.terminas/logs/audit.jsonl
+  data_dir: .terminas
+  log_file: null                   # padrao: <data_dir>/logs/audit.jsonl
 
 # Servidores MCP (stdio) cujas ferramentas viram skills "mcp.<servidor>.<ferramenta>".
 # Requer: pip install -e ".[mcp]". Exemplo (ajuste ao servidor que voce usa):
