@@ -32,4 +32,8 @@ def fast_permissions(request, monkeypatch):
     `real_permissions` exercitam as permissoes de verdade."""
     if request.node.get_closest_marker("real_permissions"):
         return
+    try:
+        import src.auth  # noqa: F401  (o pacote, nao o submodulo: uma falha parcial deixa submodulos em sys.modules)
+    except ImportError:  # o job "static" do CI instala so pytest e pyyaml; la nada disto e necessario
+        return
     monkeypatch.setattr("src.auth.store.restrict_to_owner", lambda *args, **kwargs: None)
