@@ -1,0 +1,152 @@
+name: Instaladores
+
+# Valida install.sh e install.ps1 em maquinas limpas (sem Python/uv previos).
+# - PR e push: instalam a partir do codigo do proprio checkout (TERMINAS_SOURCE).
+# - push na main e execucao manual: tambem rodam o comando EXATO do README (baixa da main).
+on:
+  pull_request:
+    paths:
+      - install.sh
+      - install.ps1
+      - .gitattributes
+      - pyproject.toml
+      - src/**
+      - tests/unit/test_installers.py
+      - .github/workflows/install.yml
+  push:
+    branches: [main]
+    paths:
+      - install.sh
+      - install.ps1
+      - pyproject.toml
+      - src/**
+      - .github/workflows/install.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  static:
+    name: Verificacoes estaticas
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest pyyaml
+      - run: pytest tests/unit/test_installers.py -q
+
+  linux:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-22.04, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Instalar a partir do checkout
+        run: TERMINAS_SOURCE="$GITHUB_WORKSPACE" bash install.sh
+      - name: O comando funciona
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          terminas --version
+          out="$(printf '/skills\n/exit\n' | terminas 2>&1)"
+          echo "$out" | grep -q quick-notes
+      - name: Reinstalar (atualizar) nao duplica o PATH
+        run: |
+          snapshot() { cat ~/.profile ~/.bashrc ~/.zshrc ~/.zprofile 2>/dev/null | shasum || true; }
+          before="$(snapshot)"
+          TERMINAS_SOURCE="$GITHUB_WORKSPACE" bash install.sh
+          after="$(snapshot)"
+          [ "$before" = "$after" ] || { echo "os arquivos de perfil mudaram na reinstalacao"; exit 1; }
+      - name: Desinstalar
+        run: |
+          bash install.sh --uninstall
+          export PATH="$HOME/.local/bin:$PATH"
+          if command -v terminas; then echo "terminas ainda esta instalado"; exit 1; fi
+
+  fedora:
+    name: fedora (container)
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    steps:
+      - name: Dependencias minimas de uma maquina limpa
+        run: dnf install -y curl tar gzip which
+      - uses: actions/checkout@v4
+      - name: Instalar a partir do checkout
+        run: TERMINAS_SOURCE="$GITHUB_WORKSPACE" bash install.sh
+      - name: O comando funciona
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          terminas --version
+      - name: Desinstalar
+        run: bash install.sh --uninstall
+
+  windows:
+    name: windows (${{ matrix.shell }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [powershell, pwsh]
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Instalar a partir do checkout (como irm | iex)
+        run: |
+          $env:TERMINAS_SOURCE = $env:GITHUB_WORKSPACE
+          Get-Content install.ps1 -Raw | Invoke-Expression
+          if ($LASTEXITCODE -ne 0) { throw "install.ps1 falhou" }
+      - name: O comando funciona
+        run: |
+          $bin = Join-Path $env:USERPROFILE '.local\bin'
+          & "$bin\terminas.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw "terminas --version falhou" }
+      - name: Reinstalar (atualizar) nao duplica o PATH do usuario
+        run: |
+          $before = [Environment]::GetEnvironmentVariable('Path', 'User')
+          $env:TERMINAS_SOURCE = $env:GITHUB_WORKSPACE
+          Get-Content install.ps1 -Raw | Invoke-Expression
+          $after = [Environment]::GetEnvironmentVariable('Path', 'User')
+          if ($before -ne $after) { throw "o PATH do usuario mudou na reinstalacao" }
+      - name: Erro nao fecha a sessao e o arquivo sai com codigo 1
+        run: |
+          $env:TERMINAS_EXTRAS = 'rag;calc'
+          Get-Content install.ps1 -Raw | Invoke-Expression
+          if ($LASTEXITCODE -ne 1) { throw "esperava LASTEXITCODE=1 no modo iex" }
+          & ${{ matrix.shell }} -NoProfile -ExecutionPolicy Bypass -File install.ps1
+          if ($LASTEXITCODE -ne 1) { throw "esperava exit 1 ao rodar o arquivo" }
+          Remove-Item Env:\TERMINAS_EXTRAS
+          # o wrapper do Actions usa o ultimo $LASTEXITCODE como codigo do passo; o 1 acima era esperado
+          $global:LASTEXITCODE = 0
+      - name: Desinstalar
+        run: |
+          $env:TERMINAS_UNINSTALL = '1'
+          Get-Content install.ps1 -Raw | Invoke-Expression
+          if (Test-Path (Join-Path $env:USERPROFILE '.local\bin\terminas.exe')) { throw "terminas.exe ainda existe" }
+
+  one-liner:
+    name: comando do README (${{ matrix.os }})
+    if: github.event_name != 'pull_request'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - name: Linux
+        if: runner.os == 'Linux'
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/guilhermetft/terminas-agent/main/install.sh | bash
+          "$HOME/.local/bin/terminas" --version
+      - name: Windows
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          irm https://raw.githubusercontent.com/guilhermetft/terminas-agent/main/install.ps1 | iex
+          & "$env:USERPROFILE\.local\bin\terminas.exe" --version
