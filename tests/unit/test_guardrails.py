@@ -484,3 +484,59 @@ def test_audit_events_are_emitted_for_each_transition():
 
 def test_no_audit_sink_is_fine():
     GuardrailEngine().evaluate(ActionRequest.shell("rm -rf x"))
+
+
+# ------------------------------------------------------------------- modo automático
+class Clock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+
+def test_auto_mode_skips_medium_but_never_critical_and_expires():
+    clock, events = Clock(), []
+    engine = GuardrailEngine(clock=clock, audit=events.append)
+    medium, critical = ActionRequest.shell("rm file.txt"), ActionRequest.shell("rm -rf /tmp/x")
+    assert engine.evaluate(medium).awaiting and not engine.auto_active and engine.auto_remaining == 0
+
+    engine.enable_auto(60)
+    assert engine.auto_active and engine.auto_remaining == 60
+    assert engine.effective_threshold is RiskLevel.CRITICAL
+    auto = engine.evaluate(medium)
+    assert auto.allowed and auto.resolution == "auto-mode"
+    assert engine.evaluate(critical).awaiting  # Crítico sempre pergunta
+    assert engine.evaluate(ActionRequest.shell("ls")).resolution == "auto"  # baixo risco: "auto"
+
+    clock.now += 30
+    assert engine.auto_remaining == 30 and engine.evaluate(medium).allowed
+    clock.now += 31
+    assert not engine.auto_active and engine.auto_remaining == 0
+    assert engine.evaluate(medium).awaiting  # expirou sozinho
+    assert [e["event"] for e in events if e["event"].startswith("auto_mode")] == ["auto_mode_on"]
+    on = next(e for e in events if e["event"] == "auto_mode_on")
+    assert on["ttl_seconds"] == 60
+
+
+def test_auto_mode_disable_and_validation():
+    events = []
+    engine = GuardrailEngine(clock=Clock(), audit=events.append)
+    engine.disable_auto()  # desligar sem estar ligado: no-op, sem evento
+    assert events == []
+    engine.enable_auto()
+    assert engine.auto_remaining == 1800
+    engine.disable_auto()
+    assert not engine.auto_active and events[-1]["event"] == "auto_mode_off"
+    for bad in (0, -5):
+        with pytest.raises(ValueError):
+            engine.enable_auto(bad)
+
+
+def test_auto_mode_without_audit_sink_and_with_lenient_threshold():
+    engine = GuardrailEngine(clock=Clock())
+    engine.enable_auto(10)
+    engine.disable_auto()
+    lenient = GuardrailEngine(approval_threshold=RiskLevel.CRITICAL, clock=Clock())
+    lenient.enable_auto(10)
+    assert lenient.evaluate(ActionRequest.shell("rm file")).resolution == "auto"  # já era livre

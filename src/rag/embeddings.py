@@ -106,7 +106,7 @@ class FastEmbedEmbedder:
         return [normalize(vec.tolist()) for vec in self._load().embed(list(texts))]
 
 
-def default_embedder() -> Embedder:
+def default_embedder(cache_dir: str | Path | None = DEFAULT_MODEL_CACHE) -> Embedder:
     """FastEmbed se instalado; senão `HashingEmbedder` (com aviso de qualidade reduzida)."""
     try:
         import fastembed  # noqa: F401
@@ -116,4 +116,4 @@ def default_embedder() -> Embedder:
             'Para busca semântica: pip install -e ".[rag]"'
         )
         return HashingEmbedder()
-    return FastEmbedEmbedder()
+    return FastEmbedEmbedder(cache_dir=cache_dir)

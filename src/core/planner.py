@@ -92,9 +92,12 @@ class PlannerEngine:
     def _messages(
         self, goal: str, context: str | None, agents: Sequence[str] | None
     ) -> list[ChatMessage]:
-        agents_rule = (
-            f"- \"agent\" deve ser um destes: {', '.join(agents)} (ou null)." if agents else ""
-        )
+        if agents is None:
+            agents_rule = ""
+        elif agents:
+            agents_rule = f"- \"agent\" deve ser um destes: {', '.join(agents)} (ou null)."
+        else:
+            agents_rule = '- Não há agentes disponíveis: use "agent": null em todas as tarefas.'
         system = SYSTEM_PROMPT.format(max_nodes=self.max_nodes, agents_rule=agents_rule)
         user = f"Meta: {goal}"
         if context:
