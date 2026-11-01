@@ -9,6 +9,7 @@ from pathlib import Path
 
 from rich.console import Console
 
+from src.auth import AuthManager
 from src.core.planner import ChatMessage
 from src.memory.config import AppConfig, PathsConfig, SkillsConfig
 from src.rag import HashingEmbedder
@@ -22,9 +23,15 @@ from src.ui.services import Services, start_services
 class ScriptedReader:
     """Entrega linhas pré-definidas; None (EOF) quando acabam. Registra cada prompt."""
 
-    def __init__(self, *lines: str | BaseException | None) -> None:
+    def __init__(self, *lines: str | BaseException | None, secrets: tuple[str | None, ...] = ()) -> None:
         self.lines = list(lines)
+        self.secrets = list(secrets)
         self.prompts: list[tuple[str, bool]] = []
+        self.secret_prompts: list[str] = []
+
+    async def read_secret(self, prompt: str) -> str | None:
+        self.secret_prompts.append(prompt)
+        return self.secrets.pop(0) if self.secrets else None
 
     async def read_line(self, prompt: str, *, history: bool = True) -> str | None:
         self.prompts.append((prompt, history))
@@ -105,6 +112,17 @@ class FakeRunner:
         return self.results.pop(0) if self.results else CommandResult(0, "ok\n")
 
 
+FAKE_KEY = "sk-ant-api03-" + "x" * 40
+
+
+def make_auth(root: Path, *, logged_in: bool = True, api=None, environ: dict | None = None) -> AuthManager:
+    """AuthManager isolado: ambiente simulado (nunca o os.environ) e pasta temporaria."""
+    env = {} if environ is None else environ
+    if logged_in:
+        env.setdefault("ANTHROPIC_API_KEY", FAKE_KEY)
+    return AuthManager(root / "auth-home", environ=env, api=api)
+
+
 def make_console(width: int = 120) -> Console:
     return Console(file=io.StringIO(), width=width, force_terminal=False, color_system=None)
 
@@ -115,7 +133,7 @@ def output(console: Console) -> str:
 
 def make_config(root: Path, *, plugins_dir: str | None = None, **extra) -> AppConfig:
     return AppConfig(
-        paths=PathsConfig(data_dir=str(root / ".terminas")),
+        paths=PathsConfig(data_dir=str(root / ".terminas"), auth_dir=str(root / "auth-home")),
         skills=SkillsConfig(plugins_dir=plugins_dir),
         **extra,
     )
@@ -128,9 +146,13 @@ async def build_app(
     workers: tuple[Worker, ...] = (),
     runner=None,
     config: AppConfig | None = None,
+    logged_in: bool = True,
+    auth: AuthManager | None = None,
+    secrets: tuple[str | None, ...] = (),
 ) -> tuple[TerminasApp, Services, ScriptedReader]:
     services = await start_services(
         config or make_config(root),
+        auth=auth or make_auth(root, logged_in=logged_in),
         llm=llm or ForbiddenLLM(),
         embedder=HashingEmbedder(),
         runner=runner,
@@ -138,7 +160,7 @@ async def build_app(
     )
     for worker in workers:
         services.subagents.register(worker)
-    reader = ScriptedReader(*reader_lines)
+    reader = ScriptedReader(*reader_lines, secrets=secrets)
     app = TerminasApp(services, make_console(), reader)
     services.memory.start_session("teste")
     return app, services, reader

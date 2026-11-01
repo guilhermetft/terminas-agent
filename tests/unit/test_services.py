@@ -2,6 +2,8 @@
 
 import os
 
+import pytest
+
 from src.memory.config import AppConfig, LLMConfig
 from src.rag import HashingEmbedder
 from src.ui.services import start_services, stop_services
@@ -108,5 +110,46 @@ async def test_mcp_listing_failure_is_recorded_not_raised(tmp_path, monkeypatch)
     services = await start(config, tmp_path)
     try:
         assert services.mcp_errors == {"(listagem de ferramentas)": "lista quebrada"}
+    finally:
+        await stop_services(services)
+
+
+
+# ====================================================== login nos serviços (issue #20)
+async def test_stored_login_is_loaded_into_the_environment_and_drives_the_planner(tmp_path, monkeypatch):
+    from src.auth import AuthManager, NotAuthenticatedError
+
+    key = "sk-ant-api03-" + "S" * 30
+    config = make_config(tmp_path)
+    AuthManager(config.auth_dir, environ={}).store.set("ANTHROPIC_API_KEY", key)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    services = await start_services(config, embedder=HashingEmbedder(), workdir=tmp_path)  # sem llm injetado
+    try:
+        assert services.auth.is_authenticated and os.environ["ANTHROPIC_API_KEY"] == key
+        assert services.auth.active_model() == "anthropic/claude-sonnet-5-5"
+        monkeypatch.delenv("ANTHROPIC_API_KEY")  # não deixa a chave vazar para outros testes
+    finally:
+        await stop_services(services)
+
+    monkeypatch.setenv("TERMINAS_HOME", str(tmp_path / "pasta-vazia"))  # TERMINAS_HOME manda sobre o config
+    anonymous = await start_services(make_config(tmp_path), embedder=HashingEmbedder(), workdir=tmp_path)
+    try:
+        assert not anonymous.auth.is_authenticated
+        with pytest.raises(NotAuthenticatedError, match="/login"):
+            await anonymous.engine.plan("qualquer meta")  # o planner real exige login
+    finally:
+        await stop_services(anonymous)
+
+
+async def test_services_use_the_config_default_model_as_a_hint(tmp_path, monkeypatch):
+    from src.auth import AuthManager
+
+    config = make_config(tmp_path, llm={"default_model": "gemini/gemini-2.5-pro"})
+    monkeypatch.setenv("GEMINI_API_KEY", "AIza" + "G" * 35)
+    services = await start_services(config, embedder=HashingEmbedder(), workdir=tmp_path)
+    try:
+        assert isinstance(services.auth, AuthManager)
+        assert services.auth.active_model() == "gemini/gemini-2.5-pro"
     finally:
         await stop_services(services)

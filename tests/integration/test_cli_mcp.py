@@ -11,7 +11,7 @@ from src.rag import HashingEmbedder  # noqa: E402
 from src.skills import McpServerConfig  # noqa: E402
 from src.ui.cli import TerminasApp  # noqa: E402
 from src.ui.services import start_services, stop_services  # noqa: E402
-from tests.helpers import ForbiddenLLM, ScriptedReader, make_console, output, make_config  # noqa: E402
+from tests.helpers import ForbiddenLLM, ScriptedReader, make_auth, make_config, make_console, output  # noqa: E402
 
 pytestmark = pytest.mark.integration
 
@@ -22,7 +22,9 @@ async def test_mcp_tools_work_inside_the_terminal(tmp_path):
     config = make_config(
         tmp_path, mcp_servers=[McpServerConfig(name="fake", command=sys.executable, args=[SERVER])]
     )
-    services = await start_services(config, llm=ForbiddenLLM(), embedder=HashingEmbedder(), workdir=tmp_path)
+    services = await start_services(
+        config, llm=ForbiddenLLM(), embedder=HashingEmbedder(), workdir=tmp_path, auth=make_auth(tmp_path)
+    )
     try:
         assert services.mcp_errors == {} and services.mcp.servers == ["fake"]
         reader = ScriptedReader("y")

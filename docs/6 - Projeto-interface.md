@@ -70,6 +70,9 @@ O agente aceita comandos prefixados com barra para controle operacional:
 | `/status` | Exibe resumo da rede de subagentes, processos em background e consumo de tokens. |
 | `/agents` | Lista todos os subagentes especialistas registrados e suas respectivas ferramentas (MCP). |
 | `/memory` | Inspeciona variáveis gravadas, contexto de sessão e preferências de usuário. |
+| `/login [provedor]` | Conecta um provedor de IA (Claude, Codex ou Gemini) com a chave de API, digitada em campo oculto. Sem provedor conectado, o agente fica bloqueado. |
+| `/logout [provedor\|all]` | Desconecta um provedor de IA e remove a chave gravada. |
+| `/model [provedor [modelo\|list]]` | Mostra ou troca o provedor e o modelo de IA ativos. |
 | `/approve <id>` | Aprova manualmente uma tarefa suspensa pelo guardrail. |
 | `/cancel` | Cancela todas as tarefas ativas e encerra execuções de subagentes imediatamente. |
 | `/clear` | Limpa a tela do terminal e reseta a memória de trabalho volátil. |

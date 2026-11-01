@@ -5,10 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from src.auth import AuthManager, authenticated_llm
 from src.core.audit import JsonlAuditLog
 from src.core.engine import MasterEngine
 from src.core.guardrails import Approver, GuardrailEngine
-from src.core.planner import LLMClient, PlannerEngine, litellm_client
+from src.core.planner import LLMClient, PlannerEngine
 from src.memory.config import AppConfig, BehaviorManager, apply_api_keys
 from src.memory.engine import MemoryEngine
 from src.rag.embeddings import Embedder, default_embedder
@@ -33,6 +34,7 @@ class Services:
     subagents: SubagentRegistry
     telemetry: SwarmTelemetry
     engine: MasterEngine
+    auth: AuthManager
     mcp: McpManager | None = None
     mcp_errors: dict[str, str] = field(default_factory=dict)
     plugins: PluginReport | None = None
@@ -50,11 +52,14 @@ async def start_services(
     runner: CommandRunner | None = None,
     workdir: str | Path | None = None,
     approver: Approver | None = None,
+    auth: AuthManager | None = None,
 ) -> Services:
     """Cria memória, RAG, guardrails, skills (nativas, plugins e MCP) e o engine.
 
     Deve rodar no mesmo task que `stop_services` (o SDK MCP exige)."""
     apply_api_keys(config)
+    auth = auth or AuthManager(config.auth_dir, preferred_model=config.llm.default_model)
+    auth.load_into_environment()  # chaves do /login ficam disponiveis ao LiteLLM
     root = Path(workdir) if workdir is not None else Path.cwd()
 
     memory = MemoryEngine(config.memory_db)
@@ -90,12 +95,13 @@ async def start_services(
         subagents=subagents,
         telemetry=telemetry,
         engine=MasterEngine(
-            PlannerEngine(llm or litellm_client(config.llm.default_model)),
+            PlannerEngine(llm or authenticated_llm(auth)),
             subagents,
             telemetry,
             max_concurrency=config.limits.max_concurrency,
             project_path=root,
         ),
+        auth=auth,
     )
 
     if config.skills.plugins_dir:

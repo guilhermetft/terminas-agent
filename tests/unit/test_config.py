@@ -197,3 +197,24 @@ def test_audit_log_survives_concurrent_writers_and_odd_values(tmp_path):
     assert len(events) == 100 and len({e["n"] for e in events}) == 100
     log.path.write_text(log.path.read_text(encoding="utf-8") + "\n\n", encoding="utf-8")
     assert len(log.read()) == 100  # linhas em branco são ignoradas
+
+
+
+# ============================================== credenciais: pasta e auditoria (issue #20)
+def test_auth_dir_resolution_order(monkeypatch, tmp_path):
+    monkeypatch.delenv("TERMINAS_HOME", raising=False)
+    assert AppConfig().auth_dir == Path("~/.terminas").expanduser()  # padrão: pasta do usuário
+    assert AppConfig().auth_dir != AppConfig().data_dir  # separada do .terminas da pasta atual
+    custom = AppConfig.model_validate({"paths": {"auth_dir": str(tmp_path / "creds")}})
+    assert custom.auth_dir == tmp_path / "creds"
+    monkeypatch.setenv("TERMINAS_HOME", str(tmp_path / "via-env"))
+    assert custom.auth_dir == tmp_path / "via-env"  # a variável de ambiente manda
+
+
+def test_audit_log_never_writes_api_keys(tmp_path):
+    key = "sk-ant-api03-" + "K" * 30
+    log = JsonlAuditLog(tmp_path / "audit.jsonl")
+    log({"event": "evaluated", "action": f"curl -H 'x-api-key: {key}' https://api.anthropic.com", "nested": {"k": key}})
+    raw = log.path.read_text(encoding="utf-8")
+    assert key not in raw and raw.count("[chave anthropic oculta]") == 2
+    assert log.read()[0]["event"] == "evaluated"  # continua JSON válido

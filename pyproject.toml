@@ -47,6 +47,7 @@ include = ["src*"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = [
+    "real_permissions: grava credenciais de verdade e confere as permissoes do arquivo (lento no Windows)",
     "integration: usa recursos reais (ex.: modelo de embeddings local); pula se indisponivel",
 ]
 testpaths = ["tests"]

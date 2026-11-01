@@ -203,7 +203,15 @@ FAKE_BIN="$(to_unix "$FAKE_BIN")"
 export FAKE_BIN
 extra=""
 [ -z "${EXTRA_PATH:-}" ] || extra="$(to_unix "$EXTRA_PATH"):"
-if [ -n "${RESTRICT_PATH:-}" ]; then PATH="$fake"; else PATH="$extra$fake:$PATH"; fi
+# Nunca deixa um uv REAL da maquina (ex.: ~/.local/bin) ser usado por estes testes.
+clean=""
+old_ifs="$IFS"; IFS=:
+for dir in $PATH; do
+  if [ -x "$dir/uv" ] || [ -x "$dir/uv.exe" ]; then continue; fi
+  clean="$clean:$dir"
+done
+IFS="$old_ifs"
+if [ -n "${RESTRICT_PATH:-}" ]; then PATH="$fake"; else PATH="$extra$fake$clean"; fi
 export PATH
 exec "$BASH" "$0" "$@"
 """
@@ -230,8 +238,15 @@ class Sandbox:
         path.chmod(0o755)
 
     def run(self, *args: str, env: dict | None = None, restricted_path: bool = False):
+        sandbox_dirs = self.fakebin.parent / "uv-sandbox"
         base = {
             "HOME": self.home.as_posix(),
+            # Defesa em profundidade: mesmo que um uv real vazasse, ele so enxergaria pastas temporarias.
+            "UV_TOOL_DIR": (sandbox_dirs / "tools").as_posix(),
+            "UV_TOOL_BIN_DIR": (sandbox_dirs / "bin").as_posix(),
+            "UV_CACHE_DIR": (sandbox_dirs / "cache").as_posix(),
+            "UV_PYTHON_INSTALL_DIR": (sandbox_dirs / "python").as_posix(),
+            "UV_INSTALL_DIR": (self.home / ".local" / "bin").as_posix(),
             "FAKE_LOG": self.log.as_posix(),
             "FAKE_BIN": self.tool_bin.as_posix(),
             "FAKE_BINDIR": self.fakebin.as_posix(),

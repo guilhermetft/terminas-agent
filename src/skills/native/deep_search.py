@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import re
-import ssl
 import urllib.parse
 import urllib.request
 from collections.abc import Awaitable, Callable
@@ -17,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from src.core.guardrails import ActionRequest
 from src.skills.base import Skill, SkillError, SkillResult
+from src.utils.http import ssl_context as _ssl_context
 
 USER_AGENT = "TerminasAgent/0.1 (+local)"
 MAX_DOWNLOAD_BYTES = 2_000_000
@@ -114,16 +114,6 @@ def extract_text(html_text: str, url: str = "", max_chars: int = DEFAULT_EXTRACT
 
 
 # ---------------------------------------------------------------------------- backends
-def _ssl_context() -> ssl.SSLContext | None:
-    """Verificação de certificado sempre ligada. Usa o bundle do `certifi` se existir, porque
-    o repositório de certificados do SO (ex.: Python no Windows) pode não ter a cadeia completa."""
-    try:
-        import certifi
-    except ImportError:
-        return None  # contexto padrão do Python
-    return ssl.create_default_context(cafile=certifi.where())
-
-
 class UrllibFetcher:
     """GET simples com limite de tamanho e timeout (executado em thread)."""
 

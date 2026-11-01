@@ -21,11 +21,13 @@ def header(
     workers: int,
     tokens: int,
     auto_remaining: float,
+    model: str | None = None,
 ) -> Panel:
     line = Text()
     line.append("Master: ", style=theme.DIM)
     line.append("BUSY" if busy else "IDLE", style=theme.WARNING if busy else theme.SUCCESS)
     line.append(f" | Active Workers: {workers} | Total Tokens: {tokens:,}")
+    line.append(f" | Model: {model or 'sem login'}", style=theme.PRIMARY if model else theme.WARNING)
     if auto_remaining > 0:
         line.append(f" | Auto: {int(auto_remaining // 60)}min", style=theme.WARNING)
     else:

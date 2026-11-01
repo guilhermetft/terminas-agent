@@ -20,6 +20,16 @@ from src import __version__
 from src.core.dag import TaskDAG
 from src.core.engine import NodeOutcome, NodeState, RunEvent, RunReport
 from src.core.guardrails import Approval, GuardrailDecision, GuardrailError
+from src.auth import (
+    PROVIDERS,
+    NotAuthenticatedError,
+    ProviderSpec,
+    ProviderStatus,
+    UnknownProviderError,
+    detect_secret,
+    get_provider,
+    redact,
+)
 from src.core.planner import PlanningError
 from src.skills.base import SkillResult
 from src.ui import components
@@ -46,6 +56,9 @@ COMMANDS: tuple[CommandSpec, ...] = (
     CommandSpec("run", "/run [meta]", "Planeja e executa; sem meta, executa o último plano."),
     CommandSpec("rag", "/rag index <caminho> | ask <pergunta> | status", "Indexa e consulta seus arquivos locais."),
     CommandSpec("skills", "/skills", "Lista skills nativas, plugins e ferramentas MCP."),
+    CommandSpec("login", "/login [claude|codex|gemini]", "Conecta um provedor de IA com a sua chave de API."),
+    CommandSpec("logout", "/logout [provedor|all]", "Desconecta um provedor de IA."),
+    CommandSpec("model", "/model [provedor [modelo|list]]", "Mostra ou troca o provedor e o modelo de IA ativos."),
     CommandSpec("skill", "/skill <nome> [json]", "Executa uma skill diretamente, sem LLM."),
     CommandSpec("status", "/status", "Subagentes, tokens e aprovações pendentes."),
     CommandSpec("agents", "/agents", "Subagentes registrados e ferramentas MCP."),
@@ -64,7 +77,12 @@ SUBCOMMANDS: dict[str, list[str]] = {
     "rag": ["index", "ask", "status"],
     "auto": ["on", "off"],
     "behavior": ["show", "tone", "verbosity", "language", "rule", "reset"],
+    "login": [p.id for p in PROVIDERS],
+    "logout": [*(p.id for p in PROVIDERS), "all"],
+    "model": [p.id for p in PROVIDERS],
 }
+# Sem nenhum provedor de IA conectado, so estes comandos funcionam (ajuda e login).
+ALLOWED_WITHOUT_LOGIN = frozenset({"help", "login", "logout", "status", "skills", "exit", "quit"})
 _TOKEN = re.compile(r"\"[^\"]*\"|'[^']*'|\S+")
 
 
@@ -127,11 +145,12 @@ class TerminasApp:
             "agents": self._cmd_agents, "memory": self._cmd_memory, "behavior": self._cmd_behavior,
             "auto": self._cmd_auto, "approve": self._cmd_approve, "reject": self._cmd_reject,
             "cancel": self._cmd_cancel, "clear": self._cmd_clear, "help": self._cmd_help,
+            "login": self._cmd_login, "logout": self._cmd_logout, "model": self._cmd_model,
         }  # fmt: skip
 
     # ------------------------------------------------------------------ saída
     def _say(self, text: str, style: str | None = None) -> None:
-        self.console.print(Text(text, style=style or ""))
+        self.console.print(Text(redact(text), style=style or ""))  # nunca imprime uma chave
 
     def info(self, text: str) -> None:
         self._say(text, theme.DIM)
@@ -167,6 +186,7 @@ class TerminasApp:
             workers=sum(len(s.active) for s in stats.values()),
             tokens=sum(s.total_tokens for s in stats.values()),
             auto_remaining=self.services.guardrails.auto_remaining,
+            model=self.services.auth.active_model(),
         )
 
     # ------------------------------------------------------------------- loop
@@ -175,6 +195,7 @@ class TerminasApp:
         self.services.memory.start_session("interativa")
         self.console.print(self._header())
         self._startup_notes()
+        self._login_notice()
         self.info("Digite /help para ver os comandos. Texto sem '/' vira /run <meta>.")
         while True:
             try:
@@ -194,13 +215,30 @@ class TerminasApp:
         for server, reason in services.mcp_errors.items():
             self.warn(f"MCP {server}: {reason}")
 
+    def _login_notice(self) -> None:
+        if not self.services.auth.is_authenticated:
+            self.warn(
+                "Nenhum provedor de IA conectado. Use /login para entrar com Claude, Codex ou Gemini "
+                "(chave de API). Até lá, o agente fica bloqueado."
+            )
+
+    def _blocked_without_login(self) -> None:
+        self.warn("O agente está bloqueado: nenhum provedor de IA conectado. Use /login (Claude, Codex ou Gemini).")
+        allowed = ", ".join(f"/{name}" for name in sorted(ALLOWED_WITHOUT_LOGIN - {"quit"}))
+        self.info(f"Sem login, só funcionam: {allowed}.")
+
     async def handle_line(self, line: str) -> bool:
         """Processa uma linha. Retorna False quando o usuário pediu para sair."""
         line = line.strip()
         if not line:
             return True
-        memory = self.services.memory
-        memory.add_message("user", line)
+        if detect_secret(line):
+            # Uma chave colada como texto comum iria para o histórico e para a memória.
+            self.warn(
+                "Isso parece uma chave de API. Não guardei nada. Para conectar um provedor, "
+                "use /login: a chave é digitada sem aparecer na tela."
+            )
+            return True
         parsed = parse_line(line)
         if parsed is None:
             parsed = ParsedCommand("run", [], line)  # texto comum = /run <meta>
@@ -213,10 +251,14 @@ class TerminasApp:
             if close:
                 self.info(f"Você quis dizer /{close[0]}?")
             return True
+        if not self.services.auth.is_authenticated and parsed.name not in ALLOWED_WITHOUT_LOGIN:
+            self._blocked_without_login()
+            return True
+        self.services.memory.add_message("user", redact(line))
         try:
             await handler(parsed)
         except Exception as exc:  # um comando com erro nunca derruba o terminal
-            self.error(f"/{parsed.name} falhou: {type(exc).__name__}: {exc}")
+            self.error(f"/{parsed.name} falhou: {type(exc).__name__}: {exc}")  # _say redige chaves
         return True
 
     # -------------------------------------------------------------- modal HITL
@@ -373,6 +415,132 @@ class TerminasApp:
             return
         self._print_result(await self.services.skills.invoke("rag-indexer", params))
 
+    # ------------------------------------------------------------ login / logout / model
+    async def _pick_provider(
+        self, statuses: list[ProviderStatus], question: str, *, allow_all: bool = False
+    ) -> ProviderSpec | str | None:
+        """Mostra a lista numerada e lê a escolha. Retorna o provedor, "all" ou None (cancelou)."""
+        self.console.print(components.providers_table(statuses, numbered=True))
+        extra = " ou all" if allow_all else ""
+        answer = await self.reader.read_line(
+            f"{question} [1-{len(statuses)}, nome{extra}; Enter cancela]: ", history=False
+        )
+        if answer is None or not answer.strip():
+            return None
+        choice = answer.strip().lower()
+        if allow_all and choice == "all":
+            return "all"
+        if choice.isdigit():
+            number = int(choice)
+            if 1 <= number <= len(statuses):
+                return statuses[number - 1].spec
+            self.error("Número fora da lista.")
+            return None
+        try:
+            return get_provider(choice)
+        except UnknownProviderError as exc:
+            self.error(str(exc))
+            return None
+
+    async def _cmd_login(self, cmd: ParsedCommand) -> None:
+        auth = self.services.auth
+        if cmd.args:
+            try:
+                spec = get_provider(cmd.args[0])
+            except UnknownProviderError as exc:
+                self.error(str(exc))
+                return
+        else:
+            picked = await self._pick_provider(auth.status(), "Qual provedor conectar?")
+            if not isinstance(picked, ProviderSpec):
+                return
+            spec = picked
+        if spec.oauth_note:
+            self.info(f"Login pelo navegador não disponível: {spec.oauth_note}")
+        self.info(f"Crie uma chave de API em: {spec.key_url}")
+        self.info("Cole a chave abaixo. Ela não aparece na tela e não fica no histórico. Enter vazio cancela.")
+        key = await self.reader.read_secret("Chave de API: ")
+        if key is None or not key.strip():
+            self.info("Login cancelado.")
+            return
+        with self.console.status("Validando a chave...", spinner_style=theme.PRIMARY):
+            result = await auth.login_api_key(spec, key)
+        if not result.ok:
+            self.error(result.message)
+            self.info("Nada foi salvo.")
+            return
+        self.ok(f"{spec.label} conectado. Modelo ativo: {result.model}.")
+        if result.warning:
+            self.warn(f"Atenção: {result.warning}")
+        self.info(f"Chave guardada em {auth.store.path}. Use /model para trocar de modelo.")
+
+    async def _cmd_logout(self, cmd: ParsedCommand) -> None:
+        auth = self.services.auth
+        logged = [status for status in auth.status() if status.logged_in]
+        if not logged:
+            self.info("Nenhum provedor conectado.")
+            return
+        if cmd.args:
+            target = cmd.args[0].lower()
+        else:
+            picked = await self._pick_provider(logged, "Sair de qual provedor?", allow_all=True)
+            if picked is None:
+                return
+            target = "all" if picked == "all" else picked.id
+        try:
+            outcomes = auth.logout(None if target == "all" else target)
+        except UnknownProviderError as exc:
+            self.error(str(exc))
+            return
+        for outcome in outcomes:
+            label = outcome.provider.label
+            if outcome.removed:
+                self.ok(f"{label} desconectado (chave removida de {auth.store.path}).")
+            elif not outcome.still_in_environment:
+                self.info(f"{label} não estava conectado.")
+            if outcome.still_in_environment:
+                self.warn(
+                    f"A variável {outcome.provider.env_var} continua definida no seu ambiente; "
+                    "remova-a para sair de verdade."
+                )
+        if not auth.is_authenticated:
+            self.warn("Nenhum provedor conectado: o agente fica bloqueado até o próximo /login.")
+
+    async def _cmd_model(self, cmd: ParsedCommand) -> None:
+        auth = self.services.auth
+        if not cmd.args:
+            self.console.print(components.providers_table([s for s in auth.status() if s.logged_in]))
+            active = auth.active_model()
+            self.info(f"Modelo ativo: {active}" if active else "Nenhum modelo ativo.")
+            self.info("Trocar: /model <provedor> [modelo]. Ver os disponíveis: /model <provedor> list")
+            return
+        try:
+            spec = get_provider(cmd.args[0])
+            wanted = cmd.args[1] if len(cmd.args) > 1 else None
+            if wanted is None:
+                auth.set_active(spec)
+                self.ok(f"Provedor ativo: {spec.label} (modelo {auth.model_id(spec)}).")
+                return
+            with self.console.status("Consultando modelos...", spinner_style=theme.PRIMARY):
+                available = await auth.list_models(spec)
+            if wanted.lower() == "list":
+                if not available:
+                    self.warn("Não consegui listar os modelos agora (sem rede?).")
+                current = auth.model_id(spec)
+                for model in available:
+                    self._say(f"{'*' if model == current else ' '} {model}")
+                return
+            if available and wanted not in available:
+                self.error(f"Modelo '{wanted}' não existe em {spec.label}.")
+                close = difflib.get_close_matches(wanted, available, n=5)
+                if close:
+                    self.info("Parecidos: " + ", ".join(close))
+                return
+            auth.set_active(spec, wanted)
+            self.ok(f"Agora usando {spec.label}, modelo {wanted}.")
+        except (UnknownProviderError, NotAuthenticatedError) as exc:
+            self.error(str(exc))
+
     async def _cmd_skills(self, cmd: ParsedCommand) -> None:
         self.console.print(components.skills_table(self.services.skills.specs()))
         mcp = self.services.mcp
@@ -409,6 +577,7 @@ class TerminasApp:
 
     async def _cmd_status(self, cmd: ParsedCommand) -> None:
         self.console.print(self._header())
+        self.console.print(components.providers_table(self.services.auth.status()))
         services = self.services
         rows = await services.skills.invoke("swarm-inspector", {"op": "health"})
         health = {r["agent"]: r["healthy"] for r in rows.data.get("agents", [])}

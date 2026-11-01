@@ -151,6 +151,22 @@ source .venv/bin/activate        # Windows (PowerShell): .\.venv\Scripts\Activat
 pip install -e ".[dev]"
 ```
 
+### Conectar um provedor de IA
+
+Sem um provedor de IA conectado o agente fica bloqueado (so `/help`, `/login`, `/logout`, `/status`, `/skills` e `/exit` funcionam). Para conectar:
+
+1. Rode `terminas` e digite `/login` (ou `/login claude`, `/login codex`, `/login gemini`).
+2. Crie uma chave de API no site do provedor (o link aparece na tela) e cole no campo que se abre. A chave **nao aparece na tela**, e o Termina a valida com o provedor e a guarda sozinho em `~/.terminas/.env`, sem voce editar nenhum arquivo.
+3. Pronto: o agente passa a responder na hora. Use `/model` para trocar de provedor ou modelo e `/logout` para sair.
+
+| Provedor | Onde criar a chave |
+|---|---|
+| Claude (Anthropic) | Claude Console, em API keys |
+| Codex (OpenAI) | platform.openai.com/api-keys |
+| Gemini (Google) | aistudio.google.com/apikey |
+
+Variaveis de ambiente (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) continuam funcionando e contam como login, o que ajuda em scripts e CI. O login por link no navegador nao esta disponivel: a Anthropic nao permite login de assinatura em apps de terceiros, e a OpenAI e o Google ainda nao foram validados para isso. O estudo esta em [docs/7 - Autenticacao](docs/7%20-%20Autenticacao.md).
+
 ---
 
 ## Modo de Uso
@@ -177,6 +193,9 @@ Durante a sessao interativa, utilize os seguintes comandos:
 - `/rag ask <pergunta>`: Consulta a base documental indexada com citacao de trechos.
 - `/skills`: Lista todas as skills nativas registradas e servidores MCP conectados.
 - `/status`: Exibe o estado dos subagentes ativos e consumo de tokens da sessao.
+- `/login [provedor]`: Conecta Claude, Codex ou Gemini com a sua chave de API (digitada sem aparecer na tela).
+- `/logout [provedor|all]`: Desconecta um provedor de IA.
+- `/model [provedor [modelo|list]]`: Mostra ou troca o provedor e o modelo ativos.
 - `/behavior`: Consulta ou ajusta o prompt de sistema e tom do agente.
 - `/clear`: Limpa a memoria de trabalho volatil e reinicializa a visualizacao.
 

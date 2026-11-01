@@ -50,11 +50,18 @@ async def _amain(args: argparse.Namespace, config: Any, overrides: dict[str, Any
         llm=overrides.get("llm"),
         embedder=overrides.get("embedder"),
         runner=overrides.get("runner"),
+        auth=overrides.get("auth"),
     )
     try:
         app = TerminasApp(services, console, PlainReader())
         app.reader = overrides.get("reader") or make_reader(app.suggestions, config.history_file)
         if args.command == "run":
+            if not services.auth.is_authenticated:
+                console.print(
+                    "Nenhum provedor de IA conectado. Rode `terminas` e use /login, "
+                    "ou defina a chave no ambiente (ex.: ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY)."
+                )
+                return EXIT_ERROR
             services.memory.start_session("run")
             report = await app.plan_and_run(" ".join(args.goal))
             services.memory.end_session()
