@@ -315,3 +315,12 @@ async def test_arrow_up_recalls_history_across_sessions(tmp_path):
         second = reader_with_pipe(pipe, history_file=history)
         pipe.send_text("\x1b[A\r")  # seta para cima + Enter
         assert await second.read_line("> ") == "/status"
+
+
+@pytest.mark.parametrize("bom", ["\ufeff", "\u00ef\u00bb\u00bf"])
+async def test_plain_reader_strips_the_bom_powershell_adds_to_piped_input(monkeypatch, bom):
+    monkeypatch.setattr(builtins, "input", lambda prompt: f"{bom}/skills")
+    assert await PlainReader().read_line("> ") == "/skills"
+    middle = "/texto " + "\ufeff" + " no meio"
+    monkeypatch.setattr(builtins, "input", lambda prompt: middle)
+    assert await PlainReader().read_line("> ") == middle  # so remove o prefixo

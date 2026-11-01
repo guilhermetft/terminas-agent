@@ -1,0 +1,3 @@
+# Scripts de instalacao: sempre LF, mesmo no Windows (CRLF quebra o bash e muda o que o GitHub serve).
+*.sh text eol=lf
+*.ps1 text eol=lf

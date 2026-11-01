@@ -96,28 +96,59 @@ O sistema conta com 9 skills nativas de fabrica:
 
 ## Inicio Rapido
 
-### Pre-requisitos
-- Python 3.11 ou superior
-- Git
-
 ### Instalacao
 
-#### Linux / macOS
-```bash
-git clone https://github.com/guilhermetft/terminas-agent.git
-cd terminas-agent
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
-```
+Um unico comando. Voce **nao precisa ter Python nem Git instalados**, e nada pede administrador ou `sudo`: o instalador usa o [`uv`](https://docs.astral.sh/uv/), que baixa o Python necessario e isola o Termina em um ambiente proprio.
 
 #### Windows (PowerShell)
 ```powershell
+irm https://raw.githubusercontent.com/guilhermetft/terminas-agent/main/install.ps1 | iex
+```
+
+#### Linux / macOS
+```bash
+curl -fsSL https://raw.githubusercontent.com/guilhermetft/terminas-agent/main/install.sh | bash
+```
+
+Quando terminar, abra um **novo terminal** e rode `terminas`. Os scripts sao curtos e legiveis: [`install.ps1`](install.ps1) e [`install.sh`](install.sh).
+
+#### Atualizar
+Rode o mesmo comando de instalacao de novo.
+
+#### Desinstalar
+```powershell
+# Windows
+$env:TERMINAS_UNINSTALL = '1'; irm https://raw.githubusercontent.com/guilhermetft/terminas-agent/main/install.ps1 | iex
+```
+```bash
+# Linux / macOS
+curl -fsSL https://raw.githubusercontent.com/guilhermetft/terminas-agent/main/install.sh | bash -s -- --uninstall
+```
+Seus dados (pasta `.terminas/`) nao sao apagados.
+
+#### Opcoes
+| Variavel | Efeito | Padrao |
+|---|---|---|
+| `TERMINAS_VERSION` | tag, branch ou commit a instalar | `main` |
+| `TERMINAS_EXTRAS` | extras opcionais: `rag` (busca semantica local), `mcp` (ferramentas MCP) ou `none` | `rag,mcp` |
+| `TERMINAS_PYTHON` | versao do Python usada pelo Termina | `3.12` |
+
+```powershell
+# Windows: instalar uma versao especifica, sem extras
+$env:TERMINAS_VERSION = 'v1.0.0'; $env:TERMINAS_EXTRAS = 'none'; irm https://raw.githubusercontent.com/guilhermetft/terminas-agent/main/install.ps1 | iex
+```
+```bash
+# Linux / macOS (a variavel vai antes do bash, depois do pipe)
+curl -fsSL https://raw.githubusercontent.com/guilhermetft/terminas-agent/main/install.sh | TERMINAS_VERSION=v1.0.0 TERMINAS_EXTRAS=none bash
+```
+
+#### Instalacao para desenvolvimento
+```bash
 git clone https://github.com/guilhermetft/terminas-agent.git
 cd terminas-agent
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -e .
+source .venv/bin/activate        # Windows (PowerShell): .\.venv\Scripts\Activate.ps1
+pip install -e ".[dev]"
 ```
 
 ---

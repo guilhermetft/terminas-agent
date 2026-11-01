@@ -18,14 +18,22 @@ class LineReader(Protocol):
         ...
 
 
+# O Windows PowerShell 5.1 prefixa um BOM UTF-8 ao enviar texto por pipe a um programa nativo.
+# O Python o le como U+FEFF (entrada em UTF-8) ou como U+00EF U+00BB U+00BF (cp1252), e o "/comando" deixaria de ser comando.
+_BOM_PREFIXES = ("\ufeff", "\u00ef\u00bb\u00bf")
+
+
 class PlainReader:
     """`input()` numa thread: funciona em qualquer terminal e com entrada redirecionada."""
 
     async def read_line(self, prompt: str, *, history: bool = True) -> str | None:
         try:
-            return await asyncio.to_thread(input, prompt)
+            line = await asyncio.to_thread(input, prompt)
         except EOFError:
             return None
+        for bom in _BOM_PREFIXES:
+            line = line.removeprefix(bom)
+        return line
 
 
 class PromptToolkitReader:

@@ -18,6 +18,7 @@ pip install -e ".[dev]"                 # dev pulls pytest, pypdf and mcp; add "
 terminas                                # interactive terminal (/help lists commands)
 terminas run "<goal>"                   # plan + run once; exit 0 ok, 1 partial/skipped, 2 error
 terminas --config other.yaml            # default is ./config.yaml, else built-in defaults
+bash install.sh / ./install.ps1         # one-line installers (uv-based); TERMINAS_SOURCE=<dir> installs a local checkout
 pytest -W error                         # all tests; the suite must stay warning-free
 pytest -m "not integration"             # fast unit suite (~14s)
 pytest tests/unit/test_x.py::test_name  # single test
@@ -26,8 +27,10 @@ pytest --cov=src --cov-branch           # ~99% today
 
 `integration` tests use real resources: the FastEmbed model (first run downloads ~87 MB into `.terminas/models`, gitignored) and a real stdio MCP server (`tests/fixtures/mcp_fake_server.py`). Optional extras: `rag` (fastembed, pypdf), `mcp` (mcp>=2). No linter/formatter is configured.
 
-Windows gotchas seen in this repo: do not pipe non-ASCII text through bash/python heredocs (it gets mangled and long heredocs break the shell tool; use file-writing tools instead); never name a test helper `test_*` in a module that tests import (pytest collects it); `write_text` converts `
-` to `
+Installers: `install.sh` and `install.ps1` at the repo root are what the README one-liners download from `raw.githubusercontent.com/.../main/`. Keep them pure ASCII with LF endings (`.gitattributes` enforces LF; PowerShell 5.1 mangles non-ASCII in `irm | iex`). In `install.ps1` never call `exit` unless the running file is `install.ps1` itself (inside `iex` it would close the user's session). They install with `uv tool install "terminas-agent[extras] @ <github zip>"`, so git is not needed. `tests/unit/test_installers.py` simulates every branch with a fake `uv`/`curl` (works in Git Bash and Linux); the real installs run in `.github/workflows/install.yml`. For a real Linux check from Windows use `wsl -d Ubuntu` with `HOME` pointed at a temp dir.
+
+Windows gotchas seen in this repo: do not pipe non-ASCII text or backslash escapes (`\uXXXX`) through bash/python heredocs (they get mangled, and long heredocs break the shell tool; use the file-writing tools, or `chr(92)` in Python); Windows PowerShell 5.1 prefixes a UTF-8 BOM to text piped into a native program (`PlainReader` strips it); never name a test helper `test_*` in a module that tests import (pytest collects it); `write_text` converts `
+` to `
 `.
 
 ## Architecture (see `docs/3 - Arquitetura.md`)
