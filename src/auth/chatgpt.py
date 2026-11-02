@@ -27,8 +27,9 @@ from src.utils import http
 ISSUER = "https://auth.openai.com"
 AUTHORIZE_URL = f"{ISSUER}/api/accounts/authorize"
 TOKEN_URL = f"{ISSUER}/api/accounts/oauth/token"
-JWKS_URL = f"{ISSUER}/.well-known/jwks.json"  # a confirmar na prova de conceito (docs/7)
+JWKS_URL = f"{ISSUER}/.well-known/jwks.json"  # confirmado em openid-configuration (jwks_uri)
 REGISTRATION_CLIENT_ID = "dynamic_agent_client"
+HOST_ID_PREFIX = "urn:uuid:"  # formato aceito pelo authorize (um UUID puro devolve invalid_authorize_request)
 AGENT_NAME = "Termina's Agent"
 RESOURCE = "https://api.openai.com/v1"
 REQUIRED_SCOPE = "chatgpt.tokens.use.direct"
@@ -190,9 +191,10 @@ class ChatGPTOAuth:
     def host_id(self) -> str:
         """`ext_agent_host_id`: gerado uma vez e guardado, para o registro ser estável."""
         value = self.store.read().get("ext_agent_host_id")
-        if isinstance(value, str) and value:
+        if isinstance(value, str) and value.startswith(HOST_ID_PREFIX):
             return value
-        value = str(uuid.uuid4())
+        # ids antigos (UUID puro) foram recusados pela OpenAI; sem login feito, é seguro trocar
+        value = f"{HOST_ID_PREFIX}{uuid.uuid4()}"
         self.store.update(ext_agent_host_id=value)
         return value
 
@@ -257,6 +259,7 @@ class ChatGPTOAuth:
                 "redirect_uri": redirect_uri,
                 "client_id": client_id,
                 "code_verifier": ctx["verifier"],
+                "resource": RESOURCE,
             }
         )
         scope = str(body.get("scope", ""))
@@ -336,7 +339,8 @@ class ChatGPTOAuth:
             raise ReloginRequired("Sessão ChatGPT ausente. Use /login codex.")
         try:
             body = self._token_request(
-                {"grant_type": "refresh_token", "refresh_token": tokens.refresh_token, "client_id": client_id},
+                {"grant_type": "refresh_token", "refresh_token": tokens.refresh_token, "client_id": client_id,
+                 "resource": RESOURCE},
                 refreshing=True,
             )
         except ReloginRequired:

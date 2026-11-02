@@ -62,11 +62,11 @@ O Codex aceita o fluxo oficial da OpenAI para apps open-source locais ("ChatGPT 
 
 **Decisão: rota B (fluxo oficial), não a rota A (provider `chatgpt/` do LiteLLM).** A rota A reaproveita o client id público do Codex CLI, que a OpenAI não documenta para terceiros; a rota B é o caminho documentado para apps open-source. O custo é implementar registro, OAuth e um cliente de Responses (`src/auth/chatgpt.py`, `src/auth/responses.py`).
 
-**Prova de conceito com conta real: pendente.** A decisão acima se baseia só na documentação oficial; o fluxo foi testado contra servidores OAuth/Responses **falsos** (`tests/fake_chatgpt.py`). Antes de considerar a rota fechada, rode um login real e confira: registro dinâmico (`client_id` `oaiapp_...` no callback), URL do JWKS (`https://auth.openai.com/.well-known/jwks.json` é uma suposição), uma resposta da Responses API e uma renovação. Registre o resultado aqui.
+**Prova de conceito com conta real: pendente.** A decisão acima se baseia na documentação oficial; o JWKS (`https://auth.openai.com/.well-known/jwks.json`) foi confirmado na `openid-configuration`, e o primeiro teste real revelou que o `ext_agent_host_id` precisa do formato `urn:uuid:`; o fluxo foi testado contra servidores OAuth/Responses **falsos** (`tests/fake_chatgpt.py`). Antes de considerar a rota fechada, rode um login real e confira: registro dinâmico (`client_id` `oaiapp_...` no callback), uma resposta da Responses API e uma renovação. Registre o resultado aqui.
 
 | Etapa | Como é feito |
 |---|---|
-| Registro | Cliente público, sem segredo. Primeiro login: `client_id=dynamic_agent_client` + `agent_name_hint` + `ext_agent_host_id` (UUID gerado uma vez). O `client_id` emitido (`oaiapp_...`) vem no callback e é reutilizado. |
+| Registro | Cliente público, sem segredo. Primeiro login: `client_id=dynamic_agent_client` + `agent_name_hint` + `ext_agent_host_id` (`urn:uuid:<UUID>`, gerado uma vez; um UUID puro é recusado pelo authorize). O `client_id` emitido (`oaiapp_...`) vem no callback e é reutilizado. |
 | OAuth | Authorization Code + PKCE (S256), `state` e `nonce`; `https://auth.openai.com/api/accounts/authorize` e `/oauth/token`; redirecionamento em `http://127.0.0.1:1455/auth/callback` (outra porta livre se a 1455 estiver ocupada); `resource=https://api.openai.com/v1`. |
 | Validação | `state`, assinatura RS256 do ID token (JWKS), issuer, audience, expiração, nonce e escopo `chatgpt.tokens.use.direct`. Qualquer falha descarta tudo (nada é gravado). |
 | Inferência | Só `POST https://api.openai.com/v1/responses` com `store: false` e `stream: true`, lido até `response.completed`. `system` vira `instructions`; o histórico vai em `input`; não se envia `temperature`, `max_output_tokens`, `top_p` nem `previous_response_id`. |
