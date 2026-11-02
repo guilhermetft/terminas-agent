@@ -217,12 +217,12 @@ def test_restrict_to_owner_never_raises_and_reports_problems(tmp_path, monkeypat
 
 def test_auth_state_is_tolerant_to_garbage(tmp_path):
     state = AuthState(tmp_path / "sub" / "auth.json")
-    assert state.read() == {"active": None, "models": {}}
+    assert state.read() == {"active": None, "models": {}, "modes": {}}
     state.write({"active": "claude", "models": {"claude": "m"}})
-    assert state.read() == {"active": "claude", "models": {"claude": "m"}}
+    assert state.read() == {"active": "claude", "models": {"claude": "m"}, "modes": {}}
     for garbage in ("não é json", "[1, 2]", '{"active": 5, "models": "x"}'):
         state.path.write_text(garbage, encoding="utf-8")
-        assert state.read() == {"active": None, "models": {}}
+        assert state.read() == {"active": None, "models": {}, "modes": {}}
 
 
 # ======================================================================== validação

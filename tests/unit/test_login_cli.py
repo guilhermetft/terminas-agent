@@ -153,10 +153,10 @@ async def test_secrets_in_error_messages_are_redacted_on_screen(make_app):
 async def test_login_with_an_api_key_for_each_provider(make_app, tmp_path, name, label, model):
     key = {"claude": CLAUDE_KEY, "codex": CODEX_KEY, "openai": CODEX_KEY, "gemini": GEMINI_KEY}[name]
     app, services, reader = await make_app(secrets=(key,))
-    await app.handle_line(f"/login {name}")
+    await app.handle_line(f"/login {name} key" if name in {"codex", "openai"} else f"/login {name}")
     text = text_of(app)
     assert f"{label} conectado. Modelo ativo: {model}." in text
-    assert "Login pelo navegador não disponível:" in text  # explica por que só há chave de API
+    assert ("Login pelo navegador não disponível:" in text) is (name not in {"codex", "openai"})
     assert "Crie uma chave de API em:" in text and "não aparece na tela" in text
     assert reader.secret_prompts == ["Chave de API: "] and reader.prompts == []
     assert services.auth.is_authenticated and str(services.auth.store.path) in text
@@ -179,7 +179,7 @@ async def test_login_lifts_the_block_immediately_without_restarting(make_app):
 
 
 async def test_login_chooser_by_number(make_app):
-    app, services, reader = await make_app("2", secrets=(CODEX_KEY,))
+    app, services, reader = await make_app("2", "2", secrets=(CODEX_KEY,))
     await app.handle_line("/login")
     assert "Qual provedor conectar?" in reader.prompts[0][0] and reader.prompts[0][1] is False  # fora do histórico
     assert "Codex (OpenAI) conectado" in text_of(app) and services.auth.active_model() == "openai/gpt-5"
@@ -271,7 +271,7 @@ async def logged_in_app(make_app, *keys_by_provider):
     providers = [p for p, _ in keys_by_provider]
     app, services, reader = await make_app(secrets=tuple(k for _, k in keys_by_provider))
     for provider in providers:
-        await app.handle_line(f"/login {provider}")
+        await app.handle_line(f"/login {provider} key" if provider == "codex" else f"/login {provider}")
     return app, services, reader
 
 
@@ -297,7 +297,7 @@ async def test_logout_one_provider_keeps_the_others(make_app):
 async def test_logout_all_and_chooser(make_app):
     app, services, _ = await logged_in_app(make_app, ("claude", CLAUDE_KEY), ("codex", CODEX_KEY))
     await app.handle_line("/logout all")
-    assert not services.auth.is_authenticated and text_of(app).count("desconectado (chave removida") == 2
+    assert not services.auth.is_authenticated and text_of(app).count("desconectado (credenciais removidas") == 2
 
     chooser, services, reader = await logged_in_app(make_app, ("claude", CLAUDE_KEY), ("codex", CODEX_KEY))
     reader.lines.extend(["1"])
@@ -326,7 +326,7 @@ async def test_logout_cannot_remove_a_key_that_comes_from_the_environment(make_a
     await app.handle_line("/logout codex")
     text = text_of(app)
     assert "A variável OPENAI_API_KEY continua definida no seu ambiente" in text
-    assert services.auth.is_authenticated and "desconectado (chave removida" not in text
+    assert services.auth.is_authenticated and "desconectado (credenciais removidas" not in text
 
 
 async def test_logout_of_a_provider_that_was_not_connected(make_app):
@@ -433,7 +433,7 @@ async def test_provider_status_header_and_table_never_print_full_keys(make_app):
 
 @pytest.mark.parametrize(
     ("name", "fragment"),
-    [("claude", "Anthropic não permite login de assinatura"), ("codex", "OpenAI não documenta"),
+    [("claude", "Anthropic não permite login de assinatura"),
      ("gemini", "cliente OAuth verificado do Termina")],
 )  # fmt: skip
 async def test_login_explains_why_there_is_no_browser_login(make_app, name, fragment):

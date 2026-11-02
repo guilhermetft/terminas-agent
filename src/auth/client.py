@@ -13,6 +13,9 @@ def authenticated_llm(auth: AuthManager) -> LLMClient:
         model = auth.active_model()
         if model is None:
             raise NotAuthenticatedError("Nenhum provedor de IA conectado. Use /login.")
+        spec = auth.active_provider()
+        if spec is not None and auth.uses_chatgpt(spec):
+            return await auth.complete_chatgpt(messages)  # Responses API, plano ChatGPT
         return await litellm_client(model)(messages)
 
     return call
