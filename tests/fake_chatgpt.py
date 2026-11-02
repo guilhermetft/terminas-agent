@@ -190,6 +190,99 @@ class FakeOpenAI:
         return 200, iter(lines)
 
 
+class FakeCodex(FakeOpenAI):
+    """Fluxo de código de dispositivo + backend do Codex."""
+
+    DEVICE_ID = "deviceauth_test"
+    USER_CODE = "ABCD-EFGHI"
+
+    def __init__(self, clock: Clock | None = None) -> None:
+        super().__init__(clock)
+        self.pending_polls = 2  # respostas "pendente" antes de liberar
+        self.polls = 0
+        self.usercode_status = 200
+        self.poll_error: tuple[int, str] | None = None
+        self.account_id = "acct-123"
+        self.token_form_calls: list[dict] = []
+        self.models = [{"slug": "gpt-5", "visibility": "list"}, {"slug": "gpt-5-codex"}, {"slug": "hid", "visibility": "hide"}]
+
+    def post(self, url, *, form=None, json_body=None, headers=None, timeout=30):
+        from src.auth import codex_device as cd
+
+        if url == cd.USERCODE_URL:
+            if self.usercode_status != 200:
+                return http.HttpResponse(self.usercode_status, "{}")
+            assert json_body == {"client_id": cd.CLIENT_ID}
+            body = {"device_auth_id": self.DEVICE_ID, "user_code": self.USER_CODE, "interval": "1",
+                    "expires_at": "2099-01-01T00:00:00+00:00"}
+            return http.HttpResponse(200, json.dumps(body))
+        if url == cd.POLL_URL:
+            self.polls += 1
+            assert json_body == {"device_auth_id": self.DEVICE_ID, "user_code": self.USER_CODE}
+            if self.poll_error:
+                status, code = self.poll_error
+                return http.HttpResponse(status, json.dumps({"error": {"code": code}}))
+            if self.polls <= self.pending_polls:
+                return http.HttpResponse(403, json.dumps({"error": {"code": "deviceauth_authorization_pending"}}))
+            return http.HttpResponse(200, json.dumps({"authorization_code": GOOD_CODE, "code_verifier": "ver-123",
+                                                      "code_challenge": "x"}))
+        assert url == TOKEN_URL, url
+        if form["client_id"] != cd.CLIENT_ID:  # fluxo oficial (cliente emitido)
+            return super().post(url, form=form, json_body=json_body, headers=headers, timeout=timeout)
+        self.token_form_calls.append(dict(form))
+        if form["grant_type"] == "authorization_code":
+            assert form["code"] == GOOD_CODE and form["code_verifier"] == "ver-123"
+            assert form["client_id"] == cd.CLIENT_ID and form["redirect_uri"] == cd.REDIRECT_URI
+            access = self._new_access()
+            body = {"access_token": access, "refresh_token": self._new_refresh(), "expires_in": 3600,
+                    "id_token": self._id_token(cd.CLIENT_ID)}
+            return http.HttpResponse(200, json.dumps(body))
+        assert "resource" not in form  # o refresh do Codex não leva `resource`
+        return super().post(url, form=form, json_body=json_body, headers=headers, timeout=timeout)
+
+    def _id_token(self, client_id: str) -> str:
+        from src.auth import codex_device as cd
+
+        if client_id != cd.CLIENT_ID:
+            return super()._id_token(client_id)
+        claims = {"iss": ISSUER, "aud": client_id, "exp": int(time.time()) + 3600,
+                  "https://api.openai.com/auth": {"chatgpt_account_id": self.account_id}}
+        return jwt.encode(claims, self.id_key, algorithm="RS256", headers={"kid": KID})
+
+    def get(self, url, headers=None, timeout=15, **kw):
+        if "backend-api/codex/models" in url:
+            self.requests.append({"url": url, "headers": dict(headers or {})})
+            token = (headers or {}).get("Authorization", "").removeprefix("Bearer ")
+            if token not in self.valid_access:
+                return http.HttpResponse(401, "{}")
+            return http.HttpResponse(200, json.dumps({"models": self.models}))
+        return super().get(url, headers=headers, timeout=timeout, **kw)
+
+
+def make_device(directory: Path, fake: FakeCodex):
+    from src.auth.codex_device import CodexDeviceAuth
+
+    async def no_sleep(_: float) -> None:
+        return None
+
+    return CodexDeviceAuth(
+        ChatGPTStore(directory / "codex.json"), post=fake.post, get=fake.get,
+        open_browser=lambda url: True, clock=fake.clock, sleep=no_sleep,
+    )
+
+
+def make_codex_auth(root: Path, fake: FakeCodex) -> AuthManager:
+    from src.auth.codex_device import CodexBackendClient
+
+    directory = root / "auth-home"
+    device = make_device(directory, fake)
+    return AuthManager(
+        directory, environ={}, codex=device,
+        codex_client=CodexBackendClient(device.account_id, stream=fake.stream, get=fake.get),
+        chatgpt=make_oauth(directory, fake), responses=ResponsesClient(stream=fake.stream, get=fake.get),
+    )
+
+
 def make_oauth(directory: Path, fake: FakeOpenAI, **kwargs) -> ChatGPTOAuth:
     return ChatGPTOAuth(
         ChatGPTStore(directory / "chatgpt.json"),

@@ -165,7 +165,7 @@ Sem um provedor de IA conectado o agente fica bloqueado (so `/help`, `/login`, `
 | Codex (OpenAI) | platform.openai.com/api-keys |
 | Gemini (Google) | aistudio.google.com/apikey |
 
-Variaveis de ambiente (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) continuam funcionando e contam como login, o que ajuda em scripts e CI. O Codex tambem aceita o login pelo plano ChatGPT no navegador (`/login codex chatgpt`, recurso em preview da OpenAI); Claude e Gemini usam so chave de API (a Anthropic nao permite login de assinatura em apps de terceiros). Detalhes em [docs/7 - Autenticacao](docs/7%20-%20Autenticacao.md).
+Variaveis de ambiente (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) continuam funcionando e contam como login, o que ajuda em scripts e CI. O Codex tambem entra com a sua conta ChatGPT por codigo de dispositivo (`/login codex chatgpt`: abra a pagina da OpenAI e digite o codigo; fluxo nao documentado pela OpenAI para terceiros) ou pelo fluxo oficial em preview (`/login codex oficial`, exige plano pago); Claude e Gemini usam so chave de API (a Anthropic nao permite login de assinatura em apps de terceiros). Detalhes em [docs/7 - Autenticacao](docs/7%20-%20Autenticacao.md).
 
 ---
 

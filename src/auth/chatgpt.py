@@ -96,10 +96,14 @@ def build_authorize_url(
     return f"{AUTHORIZE_URL}?{urllib.parse.urlencode(params)}"
 
 
-_PAGE = (
-    "<!doctype html><meta charset=utf-8><title>Termina</title>"
-    "<body style='font-family:sans-serif;margin:3em'><h2>{title}</h2><p>{body}</p></body>"
-)
+def parse_query(raw: str) -> dict[str, str]:
+    """Querystring do callback. Percent-decode só (um '+' literal no `code` não vira espaço)."""
+    values: dict[str, str] = {}
+    for part in raw.split("&"):
+        name, sep, value = part.partition("=")
+        if name and sep and urllib.parse.unquote(name) not in values:
+            values[urllib.parse.unquote(name)] = urllib.parse.unquote(value)
+    return values
 
 
 class CallbackServer:
@@ -117,16 +121,10 @@ class CallbackServer:
                 if parsed.path != CALLBACK_PATH:
                     self.send_error(404)
                     return
-                query = {k: v[0] for k, v in urllib.parse.parse_qs(parsed.query).items()}
-                failed = "error" in query
-                title = "Não foi possível entrar" if failed else "Pronto! Pode fechar esta aba."
-                body = "Volte ao terminal." if failed else "O Termina já recebeu o seu login. Volte ao terminal."
-                payload = _PAGE.format(title=title, body=body).encode()
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Content-Length", str(len(payload)))
+                query = parse_query(parsed.query)
+                # 204: o navegador fica na página em que estava; nenhuma tela do Termina aparece
+                self.send_response(204)
                 self.end_headers()
-                self.wfile.write(payload)
                 if owner.params is None:
                     owner.params = query
                     owner._done.set()
@@ -168,6 +166,8 @@ class CallbackServer:
 
 
 class ChatGPTOAuth:
+    refresh_extra: dict[str, str] = {"resource": RESOURCE}  # parâmetros extras da renovação (variam por fluxo)
+
     def __init__(
         self,
         store: ChatGPTStore,
@@ -252,16 +252,26 @@ class ChatGPTOAuth:
         client_id = params.get("client_id") or ctx["client_id"]
         if client_id == REGISTRATION_CLIENT_ID:
             raise ChatGPTAuthError("A OpenAI não devolveu o client_id registrado para o Termina.")
-        body = self._token_request(
-            {
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": redirect_uri,
-                "client_id": client_id,
-                "code_verifier": ctx["verifier"],
-                "resource": RESOURCE,
-            }
-        )
+        try:
+            body = self._token_request(
+                {
+                    "grant_type": "authorization_code",
+                    "code": code,
+                    "redirect_uri": redirect_uri,
+                    "client_id": client_id,
+                    "code_verifier": ctx["verifier"],
+                    "resource": RESOURCE,
+                }
+            )
+        except ChatGPTAuthError as exc:  # detalhes não secretos para diagnosticar (sem code/verifier/tokens)
+            if "invalid_grant" in str(exc):
+                raise ChatGPTAuthError(
+                    "A OpenAI recusou o código de login (invalid_grant). O acesso pelo plano ChatGPT costuma exigir "
+                    "um plano pago; contas gratuitas são recusadas. Use uma chave de API (/login codex key) "
+                    "ou outro provedor (ex.: /login gemini, que tem camada gratuita)."
+                ) from exc
+            extra = f" [client_id={client_id}; redirect_uri={redirect_uri}; callback trouxe: {', '.join(sorted(params))}]"
+            raise ChatGPTAuthError(f"{exc}{extra}", offer_api_key=exc.offer_api_key) from exc
         scope = str(body.get("scope", ""))
         if REQUIRED_SCOPE not in scope.split():
             raise ChatGPTAuthError(
@@ -288,7 +298,7 @@ class ChatGPTOAuth:
         return ChatGPTAuthError(f"A OpenAI recusou o login: {detail}")
 
     # ---------------------------------------------------------------- ID token
-    def validate_id_token(self, id_token: str, *, client_id: str, nonce: str) -> dict[str, object]:
+    def validate_id_token(self, id_token: str, *, client_id: str, nonce: str | None) -> dict[str, object]:
         """Assinatura (JWKS), issuer, audience, expiração e nonce."""
         try:
             header = jwt.get_unverified_header(id_token)
@@ -306,7 +316,7 @@ class ChatGPTOAuth:
             )
         except jwt.PyJWTError as exc:
             raise ChatGPTAuthError(f"ID token inválido: {exc}") from exc
-        if not secrets.compare_digest(str(claims.get("nonce", "")), nonce):
+        if nonce is not None and not secrets.compare_digest(str(claims.get("nonce", "")), nonce):
             raise ChatGPTAuthError("ID token com nonce diferente do esperado.")
         return claims
 
@@ -340,7 +350,7 @@ class ChatGPTOAuth:
         try:
             body = self._token_request(
                 {"grant_type": "refresh_token", "refresh_token": tokens.refresh_token, "client_id": client_id,
-                 "resource": RESOURCE},
+                 **self.refresh_extra},
                 refreshing=True,
             )
         except ReloginRequired:
@@ -383,5 +393,8 @@ class ChatGPTOAuth:
             raise ReloginRequired(
                 "A sessão do plano ChatGPT expirou ou foi revogada. Use /login codex para entrar de novo."
             )
+        description = str(body.get("error_description", "")) if isinstance(body, dict) else ""
         suffix = f": {code}" if code else ""
+        if description:
+            suffix += f" ({description})"
         raise ChatGPTAuthError(f"A OpenAI recusou a troca de tokens (HTTP {response.status}{suffix}).")

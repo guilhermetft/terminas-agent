@@ -35,12 +35,14 @@ class TokenRejectedError(ChatGPTAuthError):
         super().__init__("A OpenAI recusou o access token do plano ChatGPT.")
 
 
-def build_payload(messages: Iterable[Mapping[str, str]], model: str) -> dict[str, Any]:
+def build_payload(messages: Iterable[Mapping[str, str]], model: str, default_instructions: str | None = None) -> dict[str, Any]:
     system = [m["content"] for m in messages if m.get("role") == "system"]
     items = [{"role": m["role"], "content": m["content"]} for m in messages if m.get("role") != "system"]
     payload: dict[str, Any] = {"model": model, "input": items, "store": False, "stream": True}
     if system:
         payload["instructions"] = "\n\n".join(system)
+    if not system and default_instructions:
+        payload["instructions"] = default_instructions
     return payload
 
 
@@ -58,13 +60,13 @@ def raise_for_status(status: int, raw: str) -> None:
     code, message = _error_info(raw)
     if status == 401:
         raise TokenRejectedError
-    if status == 429 and code == USAGE_LIMIT_CODE:
+    if status == 429 and code in {USAGE_LIMIT_CODE, "usage_limit_reached"}:
         raise UsageLimitError(
             f"O limite de uso do seu plano ChatGPT acabou. Veja {USAGE_URL}, espere liberar ou use uma chave de API."
         )
     if status == 429:
         raise ChatGPTAuthError("A OpenAI limitou as requisições (HTTP 429). Tente de novo em instantes.", offer_api_key=False)
-    if status == 403 or code in {"consent_required", "insufficient_scope", "not_eligible"}:
+    if status == 403 or code in {"consent_required", "insufficient_scope", "not_eligible", "usage_not_included"}:
         raise AccessDeniedError(
             "O plano ChatGPT não autorizou este app (consentimento ou escopo ausente, ou conta não elegível). "
             "Use uma chave de API."
@@ -119,6 +121,16 @@ def _output_text(response: Mapping[str, Any]) -> str:
 
 
 class ResponsesClient:
+    default_instructions: str | None = None
+    models_path = "/models"
+
+    def extra_headers(self) -> dict[str, str]:
+        return {}
+
+    def parse_models(self, payload: object) -> list[str]:
+        data = payload.get("data", []) if isinstance(payload, dict) else []
+        return sorted({str(m["id"]) for m in data if isinstance(m, dict) and m.get("visibility") == "list" and m.get("id")})
+
     def __init__(self, *, stream: Streamer = http.post_stream, get: Getter = http.get, base_url: str = BASE_URL) -> None:
         self._stream = stream
         self._get = get
@@ -128,8 +140,8 @@ class ResponsesClient:
         try:
             status, lines = self._stream(
                 f"{self._base}/responses",
-                json_body=build_payload(list(messages), model),
-                headers={"Authorization": f"Bearer {token}", "Accept": "text/event-stream"},
+                json_body=build_payload(list(messages), model, self.default_instructions),
+                headers={"Authorization": f"Bearer {token}", "Accept": "text/event-stream", **self.extra_headers()},
                 timeout=120,
             )
             if status != 200:
@@ -142,17 +154,17 @@ class ResponsesClient:
         return await asyncio.to_thread(self.complete_sync, token, model, list(messages))
 
     def list_models_sync(self, token: str) -> list[str]:
+        headers = {"Authorization": f"Bearer {token}", **self.extra_headers()}
         try:
-            response = self._get(f"{self._base}/models", headers={"Authorization": f"Bearer {token}"}, timeout=15)
+            response = self._get(f"{self._base}{self.models_path}", headers=headers, timeout=15)
         except http.HttpError as exc:
             raise ChatGPTAuthError(f"Não consegui falar com a OpenAI: {exc}", offer_api_key=False) from exc
         if response.status != 200:
             raise_for_status(response.status, response.body)
         try:
-            data = response.json().get("data", [])
-        except (ValueError, AttributeError):
+            return self.parse_models(response.json())
+        except ValueError:
             return []
-        return sorted({str(m["id"]) for m in data if isinstance(m, dict) and m.get("visibility") == "list" and m.get("id")})
 
     async def list_models(self, token: str) -> list[str]:
         return await asyncio.to_thread(self.list_models_sync, token)

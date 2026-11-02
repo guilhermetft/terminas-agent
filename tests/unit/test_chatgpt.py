@@ -145,6 +145,13 @@ async def test_login_survives_a_browser_that_fails_to_open(tmp_path, fake, seen)
     assert (await oauth.login(seen.append)).access_token
 
 
+async def test_invalid_grant_on_code_exchange_hints_at_paid_plan(tmp_path, fake, seen):
+    fake.token_status, fake.token_error = 400, "invalid_grant"
+    with pytest.raises(ChatGPTAuthError, match="plano pago") as info:
+        await make_oauth(tmp_path, fake).login(seen.append)
+    assert info.value.offer_api_key
+
+
 async def test_token_endpoint_error_is_reported(tmp_path, fake, seen):
     fake.token_status, fake.token_error = 500, "server_error"
     with pytest.raises(ChatGPTAuthError, match="HTTP 500: server_error"):
@@ -336,7 +343,7 @@ def screen(app) -> str:
 async def test_cli_login_codex_chatgpt_then_plan_without_api_key(make_app, tmp_path, fake):
     llm = FakeLLM(plan_json(("t1", None)))
     app, services, reader = await make_app(llm=llm)
-    await app.handle_line("/login codex chatgpt")
+    await app.handle_line("/login codex oficial")
     text = screen(app)
     assert "https://auth.openai.com/api/accounts/authorize?" in text and "127.0.0.1" in text
     assert "Codex (OpenAI) conectado pelo plano ChatGPT. Modelo ativo: gpt-5." in text
@@ -346,10 +353,10 @@ async def test_cli_login_codex_chatgpt_then_plan_without_api_key(make_app, tmp_p
 
 
 async def test_cli_login_codex_menu_lets_choose_between_chatgpt_and_key(make_app):
-    app, services, reader = await make_app("1")
+    app, services, reader = await make_app("3")
     await app.handle_line("/login codex")
     text = screen(app)
-    assert "Entrar com ChatGPT" in text and "Chave de API da OpenAI" in text
+    assert "Entrar com ChatGPT" in text and "Chave de API da OpenAI" in text and "ChatGPT oficial" in text
     assert "Como entrar?" in reader.prompts[0][0] and services.auth.is_authenticated
 
 
@@ -362,13 +369,13 @@ async def test_cli_login_codex_menu_can_be_cancelled(make_app):
 async def test_cli_login_codex_rejects_unknown_method(make_app):
     app, *_ = await make_app()
     await app.handle_line("/login codex xyz")
-    assert "Uso: /login codex [chatgpt|key]." in screen(app)
+    assert "Uso: /login codex [chatgpt|oficial|key]." in screen(app)
 
 
 async def test_cli_consent_denied_explains_and_offers_api_key(make_app, fake):
     fake.callback_mode = "denied"
     app, services, _ = await make_app()
-    await app.handle_line("/login codex chatgpt")
+    await app.handle_line("/login codex oficial")
     text = screen(app)
     assert "negou o consentimento" in text and "/login codex key" in text and "Nada foi salvo." in text
     assert not services.auth.is_authenticated
@@ -376,7 +383,7 @@ async def test_cli_consent_denied_explains_and_offers_api_key(make_app, fake):
 
 async def test_cli_logout_codex_removes_the_session(make_app):
     app, services, _ = await make_app()
-    await app.handle_line("/login codex chatgpt")
+    await app.handle_line("/login codex oficial")
     await app.handle_line("/logout codex")
     text = screen(app)
     assert "Codex (OpenAI) desconectado" in text and "o agente fica bloqueado" in text
@@ -387,7 +394,7 @@ async def test_cli_logout_codex_removes_the_session(make_app):
 
 async def test_cli_model_lists_chatgpt_models(make_app):
     app, *_ = await make_app()
-    await app.handle_line("/login codex chatgpt")
+    await app.handle_line("/login codex oficial")
     await app.handle_line("/model codex list")
     text = screen(app)
     assert "* gpt-5" in text and "gpt-5-codex" in text and "internal-x" not in text
@@ -406,7 +413,7 @@ def test_redact_and_detect_jwt_tokens():
 
 async def test_no_token_leaks_to_screen_history_memory_or_audit(make_app, tmp_path, fake):
     app, services, _ = await make_app()
-    await app.handle_line("/login codex chatgpt")
+    await app.handle_line("/login codex oficial")
     await app.handle_line("/status")
     await app.handle_line("/model")
     saved = services.auth.chatgpt_store.read()

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Literal
 
 from src.auth.chatgpt import ChatGPTAuthError, ChatGPTOAuth, Tokens, UrlHandler
+from src.auth.codex_device import CodeHandler, CodexBackendClient, CodexDeviceAuth
 from src.auth.providers import (
     CODEX,
     PROVIDERS,
@@ -76,6 +77,8 @@ class AuthManager:
         preferred_model: str | None = None,
         chatgpt: ChatGPTOAuth | None = None,
         responses: ResponsesClient | None = None,
+        codex: CodexDeviceAuth | None = None,
+        codex_client: CodexBackendClient | None = None,
     ) -> None:
         self.directory = Path(auth_dir).expanduser()
         self.store = CredentialStore(self.directory / ".env")
@@ -85,6 +88,13 @@ class AuthManager:
         self.chatgpt = chatgpt or ChatGPTOAuth(ChatGPTStore(self.directory / "chatgpt.json"))
         self.chatgpt_store = self.chatgpt.store
         self.responses = responses or ResponsesClient()
+        self.codex = codex or CodexDeviceAuth(ChatGPTStore(self.directory / "codex.json"))
+        self.codex_client = codex_client or CodexBackendClient(self.codex.account_id)
+        # modo -> (login/renovação, cliente de inferência). "chatgpt" = fluxo oficial; "codex" = código de dispositivo
+        self._flows: dict[str, tuple[ChatGPTOAuth, ResponsesClient]] = {
+            "chatgpt": (self.chatgpt, self.responses),
+            "codex": (self.codex, self.codex_client),
+        }
         self._refresh_lock = threading.Lock()
         self._preferred_model = preferred_model  # ex.: llm.default_model do config.yaml
 
@@ -108,12 +118,22 @@ class AuthManager:
             return Credential(spec, stored, "store")
         return None
 
+    def chatgpt_mode(self, spec: ProviderSpec) -> str | None:
+        """Forma de acesso pelo plano ChatGPT em uso ("chatgpt" oficial ou "codex" dispositivo), ou None.
+
+        O Codex usa o plano quando há tokens e (é a forma escolhida ou não há chave de API)."""
+        if spec.id != CODEX.id:
+            return None
+        available = [mode for mode, (oauth, _) in self._flows.items() if oauth.store.has_tokens()]
+        if not available:
+            return None
+        saved = self.state.read()["modes"].get(spec.id)
+        if saved in available:
+            return saved
+        return available[0] if self._api_key(spec) is None else None
+
     def uses_chatgpt(self, spec: ProviderSpec) -> bool:
-        """O Codex entra pelo plano ChatGPT quando há tokens e (é a forma escolhida ou não há chave)."""
-        if spec.id != CODEX.id or not self.chatgpt_store.has_tokens():
-            return False
-        mode = self.state.read()["modes"].get(spec.id)
-        return mode == "chatgpt" or self._api_key(spec) is None
+        return self.chatgpt_mode(spec) is not None
 
     def credential(self, spec: ProviderSpec) -> Credential | None:
         if self.uses_chatgpt(spec):
@@ -179,33 +199,43 @@ class AuthManager:
         cred = self.credential(spec)
         if cred is None:
             raise NotAuthenticatedError(f"{spec.label} não está conectado. Use /login {spec.id}.")
-        if cred.source == "chatgpt":
-            return await self._call_chatgpt(lambda token: self.responses.list_models(token))
+        mode = self.chatgpt_mode(spec)
+        if mode is not None:
+            client = self._flows[mode][1]
+            try:
+                return await self._call_chatgpt(mode, lambda token: client.list_models(token))
+            except ChatGPTAuthError:
+                return []  # sem lista: qualquer modelo é aceito em /model
         return (await self.api.check(spec, cred.value)).models
 
     # ------------------------------------------------------------- plano ChatGPT
-    def _valid_token_sync(self, *, force: bool = False) -> str:
+    def _valid_token_sync(self, mode: str, *, force: bool = False) -> str:
+        oauth = self._flows[mode][0]
         with self._refresh_lock:
-            tokens = self.chatgpt.stored_tokens()
+            tokens = oauth.stored_tokens()
             if tokens is None:
                 raise ChatGPTAuthError("Sessão ChatGPT ausente. Use /login codex.")
-            if force or self.chatgpt.needs_refresh(tokens):
-                tokens = self.chatgpt.refresh()
+            if force or oauth.needs_refresh(tokens):
+                tokens = oauth.refresh()
             return tokens.access_token
 
-    async def _call_chatgpt(self, action: Callable[[str], object]):  # noqa: ANN202
+    async def _call_chatgpt(self, mode: str, action: Callable[[str], object]):  # noqa: ANN202
         """Executa `action(token)` com um token válido; renova sozinho (e tenta de novo 1x num 401)."""
-        token = await asyncio.to_thread(self._valid_token_sync)
+        token = await asyncio.to_thread(self._valid_token_sync, mode)
         try:
             return await action(token)  # type: ignore[misc]
         except TokenRejectedError:
-            token = await asyncio.to_thread(self._valid_token_sync, force=True)
+            token = await asyncio.to_thread(self._valid_token_sync, mode, force=True)
             return await action(token)  # type: ignore[misc]
 
     async def complete_chatgpt(self, messages: Iterable[Mapping[str, str]]) -> str:
+        mode = self.chatgpt_mode(CODEX)
+        if mode is None:
+            raise NotAuthenticatedError("Sessão ChatGPT ausente. Use /login codex.")
         model = self.model_id(CODEX)
         batch = list(messages)
-        return await self._call_chatgpt(lambda token: self.responses.complete(token, model, batch))
+        client = self._flows[mode][1]
+        return await self._call_chatgpt(mode, lambda token: client.complete(token, model, batch))
 
     # ---------------------------------------------------------------- login / logout
     async def login_api_key(self, provider: str | ProviderSpec, key: str) -> LoginResult:
@@ -237,7 +267,7 @@ class AuthManager:
         except ChatGPTAuthError as exc:
             hint = " Você pode usar uma chave de API: /login codex key." if exc.offer_api_key else ""
             return LoginResult(False, f"{exc}{hint}", spec)
-        models = await self._models_after_login(tokens)
+        models = await self._models_after_login("chatgpt", tokens)
         state = self.state.read()
         saved = state["models"].get(spec.id)
         if not (isinstance(saved, str) and saved and (not models or saved in models)):
@@ -249,9 +279,27 @@ class AuthManager:
             True, "Codex conectado pelo plano ChatGPT.", spec, state["models"][spec.id], self.chatgpt_store.warning
         )
 
-    async def _models_after_login(self, tokens: Tokens) -> list[str]:
+    async def login_codex_device(self, on_code: CodeHandler) -> LoginResult:
+        """Entra com ChatGPT por código de dispositivo (só o Codex). Nada é gravado se falhar."""
+        spec = CODEX
         try:
-            return await self.responses.list_models(tokens.access_token)
+            tokens = await self.codex.login(on_code)
+        except ChatGPTAuthError as exc:
+            hint = " Você pode usar uma chave de API: /login codex key." if exc.offer_api_key else ""
+            return LoginResult(False, f"{exc}{hint}", spec)
+        models = await self._models_after_login("codex", tokens)
+        state = self.state.read()
+        saved = state["models"].get(spec.id)
+        if not (isinstance(saved, str) and saved and (not models or saved in models)):
+            state["models"][spec.id] = choose_default_model(spec, models)
+        state["active"] = spec.id
+        state["modes"][spec.id] = "codex"
+        self.state.write(state)
+        return LoginResult(True, "Codex conectado pelo ChatGPT.", spec, state["models"][spec.id], self.codex.store.warning)
+
+    async def _models_after_login(self, mode: str, tokens: Tokens) -> list[str]:
+        try:
+            return await self._flows[mode][1].list_models(tokens.access_token)
         except ChatGPTAuthError:
             return []  # login vale mesmo sem a lista; cai no modelo padrão
 
@@ -265,7 +313,8 @@ class AuthManager:
             if removed and self.environ.get(spec.env_var) == stored:
                 del self.environ[spec.env_var]
             if spec.id == CODEX.id:
-                removed = self.chatgpt_store.clear_tokens() or removed
+                cleared = [oauth.store.clear_tokens() for oauth, _ in self._flows.values()]
+                removed = any(cleared) or removed
             outcomes.append(LogoutOutcome(spec, removed, bool(self.environ.get(spec.env_var))))
         state = self.state.read()
         for outcome in outcomes:
