@@ -52,6 +52,14 @@ def test_authorize_url_registers_on_first_use_and_reuses_client_id_later():
         assert "resource=https%3A%2F%2Fapi.openai.com%2Fv1" in url and "127.0.0.1" in url
 
 
+def test_host_id_is_urn_uuid_and_legacy_plain_uuid_is_replaced(tmp_path, fake):
+    oauth = make_oauth(tmp_path, fake)
+    first = oauth.host_id()
+    assert first.startswith("urn:uuid:") and oauth.host_id() == first  # estável
+    oauth.store.update(ext_agent_host_id="39b31aff-bd5f-45ee-9920-928fdf9bc7fc")  # formato recusado pela OpenAI
+    assert oauth.host_id().startswith("urn:uuid:")
+
+
 # ======================================================================== login
 async def test_login_full_flow_saves_tokens_and_ids(tmp_path, fake, seen):
     oauth = make_oauth(tmp_path, fake)
@@ -62,7 +70,9 @@ async def test_login_full_flow_saves_tokens_and_ids(tmp_path, fake, seen):
     saved = oauth.store.read()
     assert saved["client_id"] == CLIENT_ID and saved["refresh_token"] == tokens.refresh_token
     assert saved["ext_agent_host_id"] == fake.authorize_params["ext_agent_host_id"]
+    assert fake.authorize_params["ext_agent_host_id"].startswith("urn:uuid:")
     assert fake.token_calls[0]["code_verifier"] and "client_secret" not in fake.token_calls[0]
+    assert fake.token_calls[0]["resource"] == "https://api.openai.com/v1"
 
 
 async def test_second_login_reuses_client_id_and_host_id(tmp_path, fake, seen):
