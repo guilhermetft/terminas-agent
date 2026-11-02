@@ -14,7 +14,7 @@ Comandos:
 
 | Comando | Efeito |
 |---|---|
-| `/login [claude\|codex\|gemini]` | Pede a chave de API em um campo **oculto**, valida com o provedor e só então grava. O provedor passa a ser o ativo. No **Codex** pergunta como entrar: `/login codex chatgpt` (plano ChatGPT, pelo navegador, ver 7.8) ou `/login codex key` (chave de API). |
+| `/login [claude\|codex\|gemini]` | Pede a chave de API em um campo **oculto**, valida com o provedor e só então grava. O provedor passa a ser o ativo. No **Codex** pergunta como entrar: `/login codex chatgpt` (ChatGPT por código de dispositivo, ver 7.9), `/login codex key` (chave de API) ou `/login codex oficial` (fluxo oficial de terceiros pelo navegador, exige plano pago, ver 7.8). |
 | `/logout [provedor\|all]` | Remove a chave gravada (e, no Codex, os tokens do plano ChatGPT). Se a chave vier de uma variável de ambiente, avisa que ela continua definida. |
 | `/model [provedor [modelo\|list]]` | Mostra ou troca o provedor e o modelo ativos; `list` consulta os modelos disponíveis na API do provedor. |
 
@@ -81,3 +81,21 @@ O Codex aceita o fluxo oficial da OpenAI para apps open-source locais ("ChatGPT 
 - Apps pagos ou hospedados remotamente seguem outro processo da OpenAI; o Termina é local e MIT.
 - As diretrizes de interface da OpenAI falam em "Continue with ChatGPT"; não está claro se valem para terminais.
 - Recurso em preview: endpoints e regras podem mudar.
+
+## 7.9 Login com ChatGPT por código de dispositivo (Codex)
+Fluxo próprio do Termina (`src/auth/codex_device.py`), sem CLI de terceiros: `/login codex chatgpt` mostra `https://auth.openai.com/codex/device` e um código curto (ex.: `ABCD-EFGHI`); o usuário abre a página, entra no ChatGPT e digita o código. Não precisa de navegador local, porta nem redirecionamento (funciona em SSH). Foi o caminho que funcionou com conta gratuita no teste do autor; o fluxo oficial de 7.8 foi recusado (`invalid_grant`) nessa conta.
+
+| Etapa | Como é feito |
+|---|---|
+| Código | `POST auth.openai.com/api/accounts/deviceauth/usercode` com o `client_id`; devolve `device_auth_id`, `user_code`, `interval`, `expires_at` (formato confirmado contra o endpoint real). |
+| Espera | Polling em `.../deviceauth/token` a cada `interval` s. `403 deviceauth_authorization_pending` = ainda pendente; 200 traz `authorization_code` e `code_verifier`. |
+| Tokens | `POST .../oauth/token` (formulário) com `redirect_uri=https://auth.openai.com/deviceauth/callback`. O ID token é validado (assinatura, issuer, audience, expiração); o `chatgpt_account_id` das claims é guardado. |
+| Inferência | Responses API do backend do Codex: `POST https://chatgpt.com/backend-api/codex/responses` com `Authorization: Bearer`, `chatgpt-account-id`, `OpenAI-Beta: responses=experimental`, `store: false`, `stream: true` e `instructions` sempre presente. |
+| Renovação | Igual a 7.8, mas o refresh não leva `resource`. Refresh inválido apaga os tokens e pede novo `/login codex`. |
+
+**Armazenamento:** `~/.terminas/codex.json` (0600 / ACL do usuário). `/logout codex` apaga os tokens dos dois fluxos do ChatGPT e a chave de API.
+
+**Ressalvas importantes:**
+- Este fluxo usa o **client id público do Codex CLI** (`app_EMoamEEZ73f0CkXaXp7hrann`) e o backend do Codex. A OpenAI não documenta esse uso por apps de terceiros: pode violar termos, mudar ou ser bloqueado sem aviso. A escolha de usá-lo foi do autor do projeto.
+- O formato do polling (`authorization_code`/`code_verifier`), o backend do Codex e a lista de modelos (`/models`) foram implementados a partir do que a OpenAI devolve no teste do código e testados contra servidores falsos; a **primeira troca real de tokens e a primeira resposta** dependem de um teste com conta real.
+- O modelo padrão é `gpt-5`. Se a conta não tiver acesso, troque com `/model codex <modelo>`.

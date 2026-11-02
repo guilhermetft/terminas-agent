@@ -459,7 +459,10 @@ class TerminasApp:
             method = await self._pick_codex_method(cmd.args[1:2])
             if method is None:
                 return
-            if method == "chatgpt":
+            if method == "device":
+                await self._login_codex_device()
+                return
+            if method == "official":
                 await self._login_chatgpt()
                 return
         elif spec.oauth_note:
@@ -482,33 +485,56 @@ class TerminasApp:
         self.info(f"Chave guardada em {auth.store.path}. Use /model para trocar de modelo.")
 
     async def _pick_codex_method(self, args: list[str]) -> str | None:
-        """'chatgpt' (plano ChatGPT) ou 'key' (chave de API); None se cancelou."""
+        """'device' (ChatGPT por código), 'official' (ChatGPT oficial, plano pago) ou 'key'; None se cancelou."""
+        words = {
+            "chatgpt": "device", "codigo": "device", "dispositivo": "device", "device": "device",
+            "oficial": "official", "navegador": "official",
+            "key": "key", "chave": "key", "api": "key", "apikey": "key",
+        }  # fmt: skip
         if args:
-            word = args[0].lower()
-            if word in {"chatgpt", "plano", "navegador"}:
-                return "chatgpt"
-            if word in {"key", "chave", "api", "apikey"}:
-                return "key"
-            self.error("Uso: /login codex [chatgpt|key].")
-            return None
-        self.info("1) Entrar com ChatGPT (usa o seu plano; abre o navegador)")
+            method = words.get(args[0].lower())
+            if method is None:
+                self.error("Uso: /login codex [chatgpt|oficial|key].")
+            return method
+        self.info("1) Entrar com ChatGPT (código de dispositivo; usa a sua conta ChatGPT)")
         self.info("2) Chave de API da OpenAI")
-        answer = await self.reader.read_line("Como entrar? [1-2; Enter cancela]: ", history=False)
+        self.info("3) ChatGPT oficial pelo navegador (preview; exige plano pago do ChatGPT)")
+        answer = await self.reader.read_line("Como entrar? [1-3; Enter cancela]: ", history=False)
         choice = (answer or "").strip().lower()
-        if choice in {"1", "chatgpt"}:
-            return "chatgpt"
-        if choice in {"2", "key", "chave"}:
-            return "key"
+        by_number = {"1": "device", "2": "key", "3": "official"}
+        if choice in by_number:
+            return by_number[choice]
+        if choice in words:
+            return words[choice]
         if choice:
             self.error("Opção inválida.")
         return None
+
+    async def _login_codex_device(self) -> None:
+        auth = self.services.auth
+        self.info("Entre com a sua conta ChatGPT: abra o endereço abaixo e digite o código.")
+
+        def show(url: str, code: str) -> None:
+            self.console.print(Text(redact(url)), soft_wrap=True)
+            self.info(f"Código: {code}")
+            self.info("Aguardando você autorizar no navegador... (Ctrl+C cancela)")
+
+        result = await auth.login_codex_device(show)
+        if not result.ok:
+            self.error(result.message)
+            self.info("Nada foi salvo.")
+            return
+        self.ok(f"{result.provider.label} conectado pelo ChatGPT. Modelo ativo: {result.model}.")
+        if result.warning:
+            self.warn(f"Atenção: {result.warning}")
+        self.info(f"Sessão guardada em {auth.codex.store.path}. Use /model para trocar de modelo.")
 
     async def _login_chatgpt(self) -> None:
         auth = self.services.auth
         self.info("Abra o link abaixo no navegador (ele também será aberto sozinho) e entre com a sua conta ChatGPT.")
 
         def show(url: str) -> None:
-            self._say(url)
+            self.console.print(Text(redact(url)), soft_wrap=True)  # sem quebras de linha: copia e clica inteiro
             self.info("Aguardando o login no navegador... (Ctrl+C cancela). Em SSH/VM, redirecione a porta 1455.")
 
         result = await auth.login_chatgpt(show)
