@@ -104,7 +104,10 @@ def providers_table(statuses: Sequence[ProviderStatus], numbered: bool = False) 
             state = Text("conectado", style=theme.PRIMARY)
         else:
             state = Text("desconectado", style=theme.DIM)
-        key = f"{status.masked_key} ({origins.get(status.source or '', '?')})" if status.logged_in else "—"
+        if status.logged_in and status.source == "chatgpt":
+            key = "plano ChatGPT"
+        else:
+            key = f"{status.masked_key} ({origins.get(status.source or '', '?')})" if status.logged_in else "—"
         row = [str(number)] if numbered else []
         table.add_row(*row, Text(status.spec.label), state, Text(key), Text(status.model or "—"))
     return table

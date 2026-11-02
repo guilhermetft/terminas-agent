@@ -56,7 +56,7 @@ COMMANDS: tuple[CommandSpec, ...] = (
     CommandSpec("run", "/run [meta]", "Planeja e executa; sem meta, executa o último plano."),
     CommandSpec("rag", "/rag index <caminho> | ask <pergunta> | status", "Indexa e consulta seus arquivos locais."),
     CommandSpec("skills", "/skills", "Lista skills nativas, plugins e ferramentas MCP."),
-    CommandSpec("login", "/login [claude|codex|gemini]", "Conecta um provedor de IA com a sua chave de API."),
+    CommandSpec("login", "/login [claude|codex|gemini]", "Conecta um provedor de IA (chave de API; Codex também pelo plano ChatGPT)."),
     CommandSpec("logout", "/logout [provedor|all]", "Desconecta um provedor de IA."),
     CommandSpec("model", "/model [provedor [modelo|list]]", "Mostra ou troca o provedor e o modelo de IA ativos."),
     CommandSpec("skill", "/skill <nome> [json]", "Executa uma skill diretamente, sem LLM."),
@@ -455,7 +455,14 @@ class TerminasApp:
             if not isinstance(picked, ProviderSpec):
                 return
             spec = picked
-        if spec.oauth_note:
+        if spec.id == "codex":
+            method = await self._pick_codex_method(cmd.args[1:2])
+            if method is None:
+                return
+            if method == "chatgpt":
+                await self._login_chatgpt()
+                return
+        elif spec.oauth_note:
             self.info(f"Login pelo navegador não disponível: {spec.oauth_note}")
         self.info(f"Crie uma chave de API em: {spec.key_url}")
         self.info("Cole a chave abaixo. Ela não aparece na tela e não fica no histórico. Enter vazio cancela.")
@@ -473,6 +480,46 @@ class TerminasApp:
         if result.warning:
             self.warn(f"Atenção: {result.warning}")
         self.info(f"Chave guardada em {auth.store.path}. Use /model para trocar de modelo.")
+
+    async def _pick_codex_method(self, args: list[str]) -> str | None:
+        """'chatgpt' (plano ChatGPT) ou 'key' (chave de API); None se cancelou."""
+        if args:
+            word = args[0].lower()
+            if word in {"chatgpt", "plano", "navegador"}:
+                return "chatgpt"
+            if word in {"key", "chave", "api", "apikey"}:
+                return "key"
+            self.error("Uso: /login codex [chatgpt|key].")
+            return None
+        self.info("1) Entrar com ChatGPT (usa o seu plano; abre o navegador)")
+        self.info("2) Chave de API da OpenAI")
+        answer = await self.reader.read_line("Como entrar? [1-2; Enter cancela]: ", history=False)
+        choice = (answer or "").strip().lower()
+        if choice in {"1", "chatgpt"}:
+            return "chatgpt"
+        if choice in {"2", "key", "chave"}:
+            return "key"
+        if choice:
+            self.error("Opção inválida.")
+        return None
+
+    async def _login_chatgpt(self) -> None:
+        auth = self.services.auth
+        self.info("Abra o link abaixo no navegador (ele também será aberto sozinho) e entre com a sua conta ChatGPT.")
+
+        def show(url: str) -> None:
+            self._say(url)
+            self.info("Aguardando o login no navegador... (Ctrl+C cancela). Em SSH/VM, redirecione a porta 1455.")
+
+        result = await auth.login_chatgpt(show)
+        if not result.ok:
+            self.error(result.message)
+            self.info("Nada foi salvo.")
+            return
+        self.ok(f"{result.provider.label} conectado pelo plano ChatGPT. Modelo ativo: {result.model}.")
+        if result.warning:
+            self.warn(f"Atenção: {result.warning}")
+        self.info(f"Sessão guardada em {auth.chatgpt_store.path}. Use /model para trocar de modelo.")
 
     async def _cmd_logout(self, cmd: ParsedCommand) -> None:
         auth = self.services.auth
@@ -495,7 +542,7 @@ class TerminasApp:
         for outcome in outcomes:
             label = outcome.provider.label
             if outcome.removed:
-                self.ok(f"{label} desconectado (chave removida de {auth.store.path}).")
+                self.ok(f"{label} desconectado (credenciais removidas de {auth.directory}).")
             elif not outcome.still_in_environment:
                 self.info(f"{label} não estava conectado.")
             if outcome.still_in_environment:

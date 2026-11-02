@@ -10,6 +10,8 @@ _SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("anthropic", re.compile(r"(?<![A-Za-z0-9])sk-ant-[A-Za-z0-9_\-]{20,}")),
     ("openai", re.compile(r"(?<![A-Za-z0-9])sk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_\-]{32,}")),
     ("gemini", re.compile(r"(?<![A-Za-z0-9])AIza[0-9A-Za-z_\-]{30,}")),
+    # JWT (access/ID token do login com ChatGPT): tres trechos base64url, os dois primeiros comecam com "eyJ"
+    ("jwt", re.compile(r"(?<![A-Za-z0-9_\-])eyJ[A-Za-z0-9_\-]{8,}\.eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}")),
     ("github", re.compile(r"(?<![A-Za-z0-9])gh[pousr]_[A-Za-z0-9]{30,}")),
 )
 PLACEHOLDER = "[chave {kind} oculta]"

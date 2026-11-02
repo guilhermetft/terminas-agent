@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
-from collections.abc import MutableMapping
+import threading
+from collections.abc import Callable, Iterable, MutableMapping, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from src.auth.chatgpt import ChatGPTAuthError, ChatGPTOAuth, Tokens, UrlHandler
 from src.auth.providers import (
+    CODEX,
     PROVIDERS,
     ProviderSpec,
     choose_default_model,
@@ -16,10 +20,11 @@ from src.auth.providers import (
     provider_for_model,
 )
 from src.auth.secrets import mask
-from src.auth.store import AuthState, CredentialStore
+from src.auth.responses import ResponsesClient, TokenRejectedError
+from src.auth.store import AuthState, ChatGPTStore, CredentialStore
 from src.auth.validation import ProviderApi
 
-Source = Literal["store", "env"]
+Source = Literal["store", "env", "chatgpt"]
 
 
 class NotAuthenticatedError(RuntimeError):
@@ -30,7 +35,9 @@ class NotAuthenticatedError(RuntimeError):
 class Credential:
     provider: ProviderSpec
     value: str
-    source: Source  # "store" = ~/.terminas/.env (via /login); "env" = variável de ambiente externa
+    # "store" = ~/.terminas/.env (via /login); "env" = variável de ambiente externa;
+    # "chatgpt" = login pelo plano ChatGPT (value fica vazio: o token nunca sai do gerente)
+    source: Source
 
 
 @dataclass(frozen=True)
@@ -55,7 +62,7 @@ class LoginResult:
 @dataclass(frozen=True)
 class LogoutOutcome:
     provider: ProviderSpec
-    removed: bool  # havia credencial gravada pelo /login
+    removed: bool  # havia credencial gravada pelo /login (chave de API ou tokens do ChatGPT)
     still_in_environment: bool  # a variável de ambiente externa continua definida
 
 
@@ -67,12 +74,18 @@ class AuthManager:
         environ: MutableMapping[str, str] | None = None,
         api: ProviderApi | None = None,
         preferred_model: str | None = None,
+        chatgpt: ChatGPTOAuth | None = None,
+        responses: ResponsesClient | None = None,
     ) -> None:
         self.directory = Path(auth_dir).expanduser()
         self.store = CredentialStore(self.directory / ".env")
         self.state = AuthState(self.directory / "auth.json")
         self.environ = os.environ if environ is None else environ
         self.api = api or ProviderApi()
+        self.chatgpt = chatgpt or ChatGPTOAuth(ChatGPTStore(self.directory / "chatgpt.json"))
+        self.chatgpt_store = self.chatgpt.store
+        self.responses = responses or ResponsesClient()
+        self._refresh_lock = threading.Lock()
         self._preferred_model = preferred_model  # ex.: llm.default_model do config.yaml
 
     # ------------------------------------------------------------------ credenciais
@@ -86,7 +99,7 @@ class AuthManager:
                 loaded.append(spec.env_var)
         return loaded
 
-    def credential(self, spec: ProviderSpec) -> Credential | None:
+    def _api_key(self, spec: ProviderSpec) -> Credential | None:
         stored = self.store.get(spec.env_var)
         from_env = self.environ.get(spec.env_var)
         if from_env:
@@ -94,6 +107,18 @@ class AuthManager:
         if stored:
             return Credential(spec, stored, "store")
         return None
+
+    def uses_chatgpt(self, spec: ProviderSpec) -> bool:
+        """O Codex entra pelo plano ChatGPT quando há tokens e (é a forma escolhida ou não há chave)."""
+        if spec.id != CODEX.id or not self.chatgpt_store.has_tokens():
+            return False
+        mode = self.state.read()["modes"].get(spec.id)
+        return mode == "chatgpt" or self._api_key(spec) is None
+
+    def credential(self, spec: ProviderSpec) -> Credential | None:
+        if self.uses_chatgpt(spec):
+            return Credential(spec, "", "chatgpt")
+        return self._api_key(spec)
 
     @property
     def is_authenticated(self) -> bool:
@@ -134,7 +159,7 @@ class AuthManager:
                     spec=spec,
                     logged_in=cred is not None,
                     source=cred.source if cred else None,
-                    masked_key=mask(cred.value) if cred else None,
+                    masked_key=mask(cred.value) if cred and cred.source != "chatgpt" else None,
                     active=bool(cred) and spec is active,
                     model=self.model_id(spec) if cred else None,
                 )
@@ -154,7 +179,33 @@ class AuthManager:
         cred = self.credential(spec)
         if cred is None:
             raise NotAuthenticatedError(f"{spec.label} não está conectado. Use /login {spec.id}.")
+        if cred.source == "chatgpt":
+            return await self._call_chatgpt(lambda token: self.responses.list_models(token))
         return (await self.api.check(spec, cred.value)).models
+
+    # ------------------------------------------------------------- plano ChatGPT
+    def _valid_token_sync(self, *, force: bool = False) -> str:
+        with self._refresh_lock:
+            tokens = self.chatgpt.stored_tokens()
+            if tokens is None:
+                raise ChatGPTAuthError("Sessão ChatGPT ausente. Use /login codex.")
+            if force or self.chatgpt.needs_refresh(tokens):
+                tokens = self.chatgpt.refresh()
+            return tokens.access_token
+
+    async def _call_chatgpt(self, action: Callable[[str], object]):  # noqa: ANN202
+        """Executa `action(token)` com um token válido; renova sozinho (e tenta de novo 1x num 401)."""
+        token = await asyncio.to_thread(self._valid_token_sync)
+        try:
+            return await action(token)  # type: ignore[misc]
+        except TokenRejectedError:
+            token = await asyncio.to_thread(self._valid_token_sync, force=True)
+            return await action(token)  # type: ignore[misc]
+
+    async def complete_chatgpt(self, messages: Iterable[Mapping[str, str]]) -> str:
+        model = self.model_id(CODEX)
+        batch = list(messages)
+        return await self._call_chatgpt(lambda token: self.responses.complete(token, model, batch))
 
     # ---------------------------------------------------------------- login / logout
     async def login_api_key(self, provider: str | ProviderSpec, key: str) -> LoginResult:
@@ -173,9 +224,36 @@ class AuthManager:
         if not (isinstance(saved, str) and saved and (not check.models or saved in check.models)):
             state["models"][spec.id] = choose_default_model(spec, check.models)
         state["active"] = spec.id
+        state["modes"][spec.id] = "api_key"
         self.state.write(state)
         message = check.message or f"{spec.label} conectado."
         return LoginResult(True, message, spec, state["models"][spec.id], self.store.warning)
+
+    async def login_chatgpt(self, on_url: UrlHandler) -> LoginResult:
+        """Entra com o plano ChatGPT pelo navegador (só o Codex). Nada é gravado se falhar."""
+        spec = CODEX
+        try:
+            tokens = await self.chatgpt.login(on_url)
+        except ChatGPTAuthError as exc:
+            hint = " Você pode usar uma chave de API: /login codex key." if exc.offer_api_key else ""
+            return LoginResult(False, f"{exc}{hint}", spec)
+        models = await self._models_after_login(tokens)
+        state = self.state.read()
+        saved = state["models"].get(spec.id)
+        if not (isinstance(saved, str) and saved and (not models or saved in models)):
+            state["models"][spec.id] = choose_default_model(spec, models)
+        state["active"] = spec.id
+        state["modes"][spec.id] = "chatgpt"
+        self.state.write(state)
+        return LoginResult(
+            True, "Codex conectado pelo plano ChatGPT.", spec, state["models"][spec.id], self.chatgpt_store.warning
+        )
+
+    async def _models_after_login(self, tokens: Tokens) -> list[str]:
+        try:
+            return await self.responses.list_models(tokens.access_token)
+        except ChatGPTAuthError:
+            return []  # login vale mesmo sem a lista; cai no modelo padrão
 
     def logout(self, provider: str | None = None) -> list[LogoutOutcome]:
         """Remove a credencial de um provedor (ou de todos, com None)."""
@@ -186,9 +264,13 @@ class AuthManager:
             removed = self.store.remove(spec.env_var)
             if removed and self.environ.get(spec.env_var) == stored:
                 del self.environ[spec.env_var]
+            if spec.id == CODEX.id:
+                removed = self.chatgpt_store.clear_tokens() or removed
             outcomes.append(LogoutOutcome(spec, removed, bool(self.environ.get(spec.env_var))))
         state = self.state.read()
+        for outcome in outcomes:
+            state["modes"].pop(outcome.provider.id, None)
         if state["active"] in {o.provider.id for o in outcomes}:
             state["active"] = None
-            self.state.write(state)
+        self.state.write(state)
         return outcomes

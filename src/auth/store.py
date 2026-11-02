@@ -38,6 +38,27 @@ def restrict_to_owner(path: Path, *, directory: bool = False) -> str | None:
     return None
 
 
+def write_private(path: Path, text: str) -> str | None:
+    """Grava `text` de forma atômica; o arquivo temporário já nasce restrito ao dono.
+
+    Retorna um aviso se não deu para restringir as permissões, senão None."""
+    directory = path.parent
+    directory.mkdir(parents=True, exist_ok=True)
+    if os.name != "nt":
+        os.chmod(directory, 0o700)
+    fd, temp_name = tempfile.mkstemp(dir=directory, prefix=".tmp-", suffix=".part")
+    temp = Path(temp_name)
+    try:
+        os.close(fd)
+        # restringe ANTES de gravar o segredo (mkstemp já cria 0600 no POSIX)
+        warning = restrict_to_owner(temp)
+        temp.write_text(text, encoding="utf-8", newline="\n")
+        os.replace(temp, path)
+        return warning
+    finally:
+        temp.unlink(missing_ok=True)
+
+
 def parse_env(text: str) -> dict[str, str]:
     values: dict[str, str] = {}
     for raw in text.splitlines():
@@ -69,20 +90,7 @@ class CredentialStore:
         return self.read().get(name)
 
     def _write_lines(self, lines: list[str]) -> None:
-        directory = self.path.parent
-        directory.mkdir(parents=True, exist_ok=True)
-        if os.name != "nt":
-            os.chmod(directory, 0o700)
-        fd, temp_name = tempfile.mkstemp(dir=directory, prefix=".env-", suffix=".tmp")
-        temp = Path(temp_name)
-        try:
-            os.close(fd)
-            # restringe ANTES de gravar o segredo (mkstemp já cria 0600 no POSIX)
-            self.warning = restrict_to_owner(temp)
-            temp.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
-            os.replace(temp, self.path)
-        finally:
-            temp.unlink(missing_ok=True)
+        self.warning = write_private(self.path, "\n".join(lines) + "\n")
 
     def _current_lines(self) -> list[str]:
         if self.path.is_file():
@@ -130,15 +138,56 @@ class AuthState:
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            return {"active": None, "models": {}}
+            return {"active": None, "models": {}, "modes": {}}
         if not isinstance(data, dict):
-            return {"active": None, "models": {}}
-        models = data.get("models")
+            return {"active": None, "models": {}, "modes": {}}
+        models, modes = data.get("models"), data.get("modes")
         return {
             "active": data.get("active") if isinstance(data.get("active"), str) else None,
             "models": models if isinstance(models, dict) else {},
+            # como cada provedor entra: "api_key" ou "chatgpt" (só o Codex tem as duas formas)
+            "modes": modes if isinstance(modes, dict) else {},
         }
 
     def write(self, state: dict[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
+
+
+class ChatGPTStore:
+    """Login pelo plano ChatGPT (`chatgpt.json`, so o dono le): client_id, host id e tokens.
+
+    `client_id` e `ext_agent_host_id` sobrevivem ao logout (o registro dinamico exige
+    reaproveita-los); os tokens sao apagados."""
+
+    TOKEN_FIELDS = ("access_token", "refresh_token", "expires_at", "scope")
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path).expanduser()
+        self.warning: str | None = None
+
+    def read(self) -> dict[str, Any]:
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def write(self, data: dict[str, Any]) -> None:
+        self.warning = write_private(self.path, json.dumps(data, indent=2) + "\n")
+
+    def update(self, **values: Any) -> dict[str, Any]:
+        data = {**self.read(), **values}
+        self.write(data)
+        return data
+
+    def has_tokens(self) -> bool:
+        data = self.read()
+        return bool(data.get("refresh_token") or data.get("access_token"))
+
+    def clear_tokens(self) -> bool:
+        data = self.read()
+        had = any([data.pop(name, None) for name in self.TOKEN_FIELDS])
+        if had:
+            self.write(data)
+        return had

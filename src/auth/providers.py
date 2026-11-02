@@ -49,10 +49,7 @@ CODEX = ProviderSpec(
     key_url="https://platform.openai.com/api-keys",
     api_base="https://api.openai.com",
     aliases=("openai", "gpt"),
-    oauth_note=(
-        "A OpenAI não documenta o uso do login ChatGPT por aplicativos de terceiros; "
-        "por isso o Termina usa chave de API."
-    ),
+    oauth_note="",  # o Codex tem login pelo plano ChatGPT (src/auth/chatgpt.py, docs/7)
 )
 GEMINI = ProviderSpec(
     id="gemini",

@@ -165,7 +165,7 @@ Sem um provedor de IA conectado o agente fica bloqueado (so `/help`, `/login`, `
 | Codex (OpenAI) | platform.openai.com/api-keys |
 | Gemini (Google) | aistudio.google.com/apikey |
 
-Variaveis de ambiente (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) continuam funcionando e contam como login, o que ajuda em scripts e CI. O login por link no navegador nao esta disponivel: a Anthropic nao permite login de assinatura em apps de terceiros, e a OpenAI e o Google ainda nao foram validados para isso. O estudo esta em [docs/7 - Autenticacao](docs/7%20-%20Autenticacao.md).
+Variaveis de ambiente (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) continuam funcionando e contam como login, o que ajuda em scripts e CI. O Codex tambem aceita o login pelo plano ChatGPT no navegador (`/login codex chatgpt`, recurso em preview da OpenAI); Claude e Gemini usam so chave de API (a Anthropic nao permite login de assinatura em apps de terceiros). Detalhes em [docs/7 - Autenticacao](docs/7%20-%20Autenticacao.md).
 
 ---
 
@@ -193,7 +193,7 @@ Durante a sessao interativa, utilize os seguintes comandos:
 - `/rag ask <pergunta>`: Consulta a base documental indexada com citacao de trechos.
 - `/skills`: Lista todas as skills nativas registradas e servidores MCP conectados.
 - `/status`: Exibe o estado dos subagentes ativos e consumo de tokens da sessao.
-- `/login [provedor]`: Conecta Claude, Codex ou Gemini com a sua chave de API (digitada sem aparecer na tela).
+- `/login [provedor]`: Conecta Claude, Codex ou Gemini com a sua chave de API (digitada sem aparecer na tela); o Codex tambem entra pelo plano ChatGPT.
 - `/logout [provedor|all]`: Desconecta um provedor de IA.
 - `/model [provedor [modelo|list]]`: Mostra ou troca o provedor e o modelo ativos.
 - `/behavior`: Consulta ou ajusta o prompt de sistema e tom do agente.

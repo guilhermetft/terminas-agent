@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import ssl
 import urllib.error
+import urllib.parse
 import urllib.request
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -55,3 +56,62 @@ def get(
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         reason = getattr(exc, "reason", exc)
         raise HttpError(str(reason)) from exc
+
+
+def _open(request: urllib.request.Request, timeout: float):  # noqa: ANN202
+    return urllib.request.urlopen(request, timeout=timeout, context=ssl_context())  # noqa: S310
+
+
+def post(
+    url: str,
+    *,
+    form: Mapping[str, str] | None = None,
+    json_body: object | None = None,
+    headers: Mapping[str, str] | None = None,
+    timeout: float = 30.0,
+    max_bytes: int = MAX_BYTES,
+) -> HttpResponse:
+    """POST síncrono (formulário ou JSON). Retorna a resposta mesmo em 4xx/5xx; `HttpError` sem resposta."""
+    merged = {"User-Agent": USER_AGENT, **(headers or {})}
+    if form is not None:
+        data = urllib.parse.urlencode(form).encode()
+        merged["Content-Type"] = "application/x-www-form-urlencoded"
+    else:
+        data = json.dumps(json_body).encode()
+        merged["Content-Type"] = "application/json"
+    request = urllib.request.Request(url, data=data, headers=merged, method="POST")
+    try:
+        with _open(request, timeout) as response:
+            return HttpResponse(response.status, response.read(max_bytes).decode("utf-8", errors="replace"))
+    except urllib.error.HTTPError as exc:
+        return HttpResponse(exc.code, exc.read(max_bytes).decode("utf-8", errors="replace"))
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise HttpError(str(getattr(exc, "reason", exc))) from exc
+
+
+def post_stream(
+    url: str,
+    *,
+    json_body: object,
+    headers: Mapping[str, str] | None = None,
+    timeout: float = 120.0,
+) -> tuple[int, Iterator[str]]:
+    """POST JSON e devolve (status, linhas). Em 4xx/5xx o corpo vem como uma única 'linha'."""
+    merged = {"User-Agent": USER_AGENT, "Content-Type": "application/json", **(headers or {})}
+    request = urllib.request.Request(url, data=json.dumps(json_body).encode(), headers=merged, method="POST")
+    try:
+        response = _open(request, timeout)
+    except urllib.error.HTTPError as exc:
+        return exc.code, iter([exc.read(MAX_BYTES).decode("utf-8", errors="replace")])
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise HttpError(str(getattr(exc, "reason", exc))) from exc
+
+    def lines() -> Iterator[str]:
+        try:
+            with response:
+                for raw in response:
+                    yield raw.decode("utf-8", errors="replace").rstrip("\r\n")
+        except (TimeoutError, OSError) as exc:
+            raise HttpError(str(exc)) from exc
+
+    return response.status, lines()
